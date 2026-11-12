@@ -1,0 +1,15 @@
+# Blueprint de Render: con este archivo Render sabe cómo publicar la página.
+# Plan gratuito. La base de datos va aparte (Neon), en DATABASE_URL.
+services:
+  - type: web
+    name: falta-uno
+    runtime: python
+    plan: free
+    region: virginia
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.11"
+      - key: DATABASE_URL
+        sync: false # Render te la pide al crear la página (no queda en GitHub)
