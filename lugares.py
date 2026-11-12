@@ -24,6 +24,7 @@ usuarios habría que usar un servicio propio o de pago.
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 import time
@@ -52,6 +53,13 @@ USER_AGENT = "FaltaUno/1.0 (proyecto universitario" + (f"; {_SITIO}" if _SITIO e
 
 class ErrorBusqueda(Exception):
     """Mensaje listo para mostrar si no se pudo buscar."""
+
+
+def metros(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Distancia aproximada en metros (de sobra para distancias dentro de una ciudad)."""
+    dy = (lat2 - lat1) * 111_320
+    dx = (lng2 - lng1) * 111_320 * math.cos(math.radians((lat1 + lat2) / 2))
+    return math.hypot(dx, dy)
 
 
 def dentro_de_zona(lat, lng) -> bool:

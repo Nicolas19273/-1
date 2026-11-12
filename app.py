@@ -235,82 +235,364 @@ def url_mapa_de(aviso: datos.Aviso) -> str:
     return url_mapa(aviso.lugar, aviso.lat, aviso.lng)
 
 
-# Estilo del mapa: CARTO Voyager (moderno) si hay clave en la variable de
+# --------------------------------------------------------------------------- #
+# Mapas
+# --------------------------------------------------------------------------- #
+# Estilo: CARTO Voyager (moderno, nítido en celulares) si existe la variable de
 # entorno CARTO_KEY (gratis: carto.com/basemaps/apikey). Sin clave se usa el
-# mapa estándar de OpenStreetMap. Ver README.
+# mapa estándar de OpenStreetMap, con colores suavizados. Ver README.
 CARTO_KEY = os.environ.get("CARTO_KEY", "").strip()
 URL_CARTO = "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key="
 CREDITO_CARTO = (
     '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, '
     '© <a href="https://carto.com/attributions">CARTO</a>'
 )
-def opciones_mapa(lat: float | None = None, lng: float | None = None) -> dict:
+METROS_MISMO_LUGAR = 80  # si el pin se aleja más que esto del lugar buscado, es otro punto
+
+# Pin fijo al centro del mapa: se mueve el mapa, no el pin (como en las apps de
+# delivery). La punta queda justo en el centro.
+PIN_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="44" height="56" viewBox="0 0 44 56">'
+    '<ellipse cx="22" cy="50" rx="7" ry="2.6" fill="#000" fill-opacity=".22"/>'
+    '<path d="M22 3.5C13 3.5 5.7 10.6 5.7 19.4c0 11.7 13.6 25.6 15 27a1.9 1.9 0 0 0 2.6 0c1.4-1.4 '
+    f'15-15.3 15-27C38.3 10.6 31 3.5 22 3.5z" fill="{COLOR_PRINCIPAL}" stroke="#fff" stroke-width="3"/>'
+    '<circle cx="22" cy="19.4" r="6.2" fill="#fff"/></svg>'
+)
+PIN_URL = "data:image/svg+xml;base64," + base64.b64encode(PIN_SVG.encode()).decode()
+
+ESTILOS_MAPA = f"""<style>
+.mapa-fu {{ position: relative; isolation: isolate; overflow: hidden; background: #e8ebe4; }}
+.mapa-fu .leaflet-container {{ background: #e8ebe4; font-family: inherit; }}
+.mapa-fu .leaflet-control-attribution {{
+  font-size: 10px; line-height: 16px; padding: 0 6px; color: #57534e;
+  background: rgba(255, 255, 255, .8) !important; border-top-left-radius: 8px;
+}}
+.mapa-fu .leaflet-control-attribution a {{ color: #44403c; }}
+.mapa-fu .leaflet-attribution-flag {{ display: none !important; }}
+.mapa-fu .leaflet-bar {{
+  border: none !important; border-radius: 12px !important; overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .18) !important;
+}}
+.mapa-fu .leaflet-bar a {{
+  width: 34px !important; height: 34px !important; line-height: 34px !important; color: #292524 !important;
+}}
+.mapa-fu.mapa-suave .leaflet-tile-pane {{ filter: saturate(.5) brightness(1.05) contrast(.95); }}
+.mapa-fu .pin-centro {{
+  position: absolute; left: 50%; top: 50%; width: 44px; height: 56px; margin: -49px 0 0 -22px;
+  pointer-events: none; z-index: 650; background: url("{PIN_URL}") no-repeat center / contain;
+}}
+</style>"""
+
+# El mapa ocupa todo su contenedor (sin altura mínima propia: si no, el pin
+# del centro quedaría corrido).
+ESTILO_LLENAR = "position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0"
+
+# Pide la ubicación al navegador (solo cuando la persona toca el botón).
+JS_MI_UBICACION = (
+    "new Promise((listo) => {"
+    " if (!navigator.geolocation) { listo(null); return; }"
+    " navigator.geolocation.getCurrentPosition("
+    "  (p) => listo([p.coords.latitude, p.coords.longitude]),"
+    "  () => listo(null),"
+    "  {enableHighAccuracy: true, timeout: 10000, maximumAge: 60000});"
+    "})"
+)
+
+
+def clases_mapa() -> str:
+    return "mapa-fu" + ("" if CARTO_KEY else " mapa-suave")
+
+
+def opciones_selector() -> dict:
+    """Mapa para elegir: se arrastra y se acerca, pero no sale de Osorno."""
+    oeste, sur, este, norte = lugares.ZONA
+    return {
+        "zoomControl": False,  # usamos botones propios, más grandes
+        "scrollWheelZoom": True,
+        "minZoom": lugares.ZOOM_MINIMO,
+        "maxZoom": 19,
+        "maxBounds": [[sur, oeste], [norte, este]],
+        "maxBoundsViscosity": 1.0,
+    }
+
+
+def opciones_vista(controles: bool = True) -> dict:
     """
-    Opciones de Leaflet. El mapa queda amarrado a Osorno: no se puede arrastrar
-    fuera de la zona ni alejar más allá de ver la ciudad completa. (Un aviso
-    antiguo con un punto fuera de Osorno se muestra igual, sin amarras.)
+    Mapa para mirar: no se arrastra (la página se desplaza normal encima) y el
+    zoom siempre es hacia el centro, así el pin del centro nunca se corre.
     """
-    opciones: dict = {"scrollWheelZoom": False}  # que la rueda del mouse no atrape la página
-    if lat is None or lng is None or lugares.dentro_de_zona(lat, lng):
-        oeste, sur, este, norte = lugares.ZONA
-        opciones.update(
-            maxBounds=[[sur, oeste], [norte, este]],
-            maxBoundsViscosity=1.0,
-            minZoom=lugares.ZOOM_MINIMO,
-        )
+    opciones: dict = {
+        "dragging": False,
+        "scrollWheelZoom": False,
+        "boxZoom": False,
+        "keyboard": False,
+        "minZoom": lugares.ZOOM_MINIMO,
+        "maxZoom": 19,
+        "zoomControl": controles,
+    }
+    if controles:
+        opciones.update(touchZoom="center", doubleClickZoom="center")
+    else:
+        opciones.update(touchZoom=False, doubleClickZoom=False)
     return opciones
 
 
-ESPERA_DIRECCION = 0.7  # segundos tras el último toque antes de buscar la dirección
-
-
-class Marcador:
-    """Punto en el color de la página, con un halo suave (más moderno que el alfiler azul)."""
-
-    def __init__(self, mapa, lat: float, lng: float) -> None:
-        self.halo = mapa.generic_layer(
-            name="circleMarker",
-            args=[(lat, lng), {"radius": 22, "stroke": False, "fillColor": COLOR_PRINCIPAL, "fillOpacity": 0.18}],
+def mapa_base(centro, zoom: int, opciones: dict):
+    """Un mapa que llena su contenedor, con el estilo de la página."""
+    mapa = ui.leaflet(center=tuple(centro), zoom=zoom, options=opciones).style(ESTILO_LLENAR)
+    if CARTO_KEY:
+        mapa.clear_layers()
+        mapa.tile_layer(
+            url_template=URL_CARTO + CARTO_KEY,
+            options={"maxZoom": 20, "attribution": CREDITO_CARTO},
         )
-        self.punto = mapa.generic_layer(
-            name="circleMarker",
-            args=[
-                (lat, lng),
-                {"radius": 9, "color": "#ffffff", "weight": 3, "fillColor": COLOR_PRINCIPAL, "fillOpacity": 1},
-            ],
-        )
+    def ajustar_tamano() -> None:  # por si se dibuja dentro de algo que recién aparece (un diálogo)
+        mapa.run_map_method("invalidateSize")  # sin esperar respuesta (devuelve el mapa entero)
 
-    def move(self, lat: float, lng: float) -> None:
-        for capa in (self.halo, self.punto):
-            capa.run_method("setLatLng", [lat, lng])
+    ui.timer(0.5, ajustar_tamano, once=True)
+    return mapa
 
 
-def dibujar_mapa(lat: float | None = None, lng: float | None = None, alto: str = "h-60"):
-    """
-    Mapa de Osorno. Con un punto: centrado ahí y con su marcador. Sin punto:
-    la ciudad completa, sin marcador (para marcarlo tocando).
-    Devuelve (mapa, marcador o None), o None si no se pudo dibujar.
-    """
-    hay_punto = lat is not None and lng is not None
+def pin_centro() -> None:
+    ui.element("div").classes("pin-centro")
+
+
+def mapa_de_vista(lat: float, lng: float, alto: str = "15rem", controles: bool = True, zoom: int = 16):
+    """Mapa para mirar dónde es, con el pin al centro. None si no se pudo dibujar."""
     try:
-        mapa = ui.leaflet(
-            center=(lat, lng) if hay_punto else lugares.CENTRO,
-            zoom=16 if hay_punto else 13,
-            options=opciones_mapa(lat, lng),
-        ).classes(f"w-full {alto} rounded-2xl overflow-hidden border border-stone-200")
-        if CARTO_KEY:
-            mapa.clear_layers()
-            mapa.tile_layer(
-                url_template=URL_CARTO + CARTO_KEY,
-                options={"maxZoom": 20, "attribution": CREDITO_CARTO},
-            )
-        marcador = Marcador(mapa, lat, lng) if hay_punto else None
-        # por si el mapa se dibuja dentro de algo que recién aparece (un diálogo)
-        ui.timer(0.4, lambda: mapa.run_map_method("invalidateSize"), once=True)
-        return mapa, marcador
+        with ui.element("div").classes(f"{clases_mapa()} w-full rounded-2xl border border-stone-200").style(
+            f"height: {alto}"
+        ) as caja:
+            mapa = mapa_base((lat, lng), zoom, opciones_vista(controles))
+            pin_centro()
+        return caja, mapa
     except Exception as error:  # el mapa es un extra: si falla, el resto sigue
         print(f"[mapa] no se pudo dibujar: {error}", flush=True)
         return None
+
+
+def _punto(valor) -> tuple[float, float] | None:
+    """[lat, lng] o {"lat":…, "lng":…} -> (lat, lng). None si no se entiende."""
+    try:
+        if isinstance(valor, dict):
+            return float(valor["lat"]), float(valor["lng"])
+        return float(valor[0]), float(valor[1])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
+def abrir_selector_ubicacion(
+    capa: ui.element,
+    *,
+    lat: float | None,
+    lng: float | None,
+    consulta: str,
+    al_confirmar: Callable,
+) -> None:
+    """
+    Pantalla completa para elegir el punto, como en las apps de delivery:
+    se busca o se mueve el mapa, el pin queda fijo al centro y se confirma.
+    al_confirmar(lat, lng, lugar_buscado_o_None) se llama al tocar «Usar este punto».
+    """
+    hay_punto = lat is not None and lng is not None
+    centro_inicial = (lat, lng) if hay_punto else lugares.CENTRO
+    estado: dict = {"centro": centro_inicial, "elegido": None}
+
+    async def buscar() -> None:
+        boton_buscar.props("loading")
+        try:
+            encontrados = await asyncio.to_thread(lugares.buscar, campo.value)
+        except lugares.ErrorBusqueda as error:
+            ui.notify(str(error), type="warning", position="top")
+            return
+        finally:
+            boton_buscar.props(remove="loading")
+        mostrar_resultados(encontrados)
+
+    def mostrar_resultados(encontrados: list) -> None:
+        resultados.clear()
+        with resultados, ui.card().classes("w-full rounded-2xl p-2 gap-1 shadow-lg"):
+            with ui.row().classes("w-full items-center justify-between no-wrap pl-2"):
+                ui.label(f"Resultados en {lugares.NOMBRE_ZONA}").classes(
+                    "text-xs font-bold tracking-wide text-stone-500"
+                )
+                ui.button(icon="close", on_click=lambda: resultados.set_visibility(False)).props(
+                    "flat round dense size=sm color=grey-7"
+                )
+            if not encontrados:
+                with ui.row().classes("w-full items-center gap-3 no-wrap px-2 pb-2"):
+                    ui.icon("search_off", size="22px").classes("text-stone-400 shrink-0")
+                    ui.label(
+                        f"No encontramos eso en {lugares.NOMBRE_ZONA}. Prueba con otro nombre o una "
+                        "calle, o mueve el mapa hasta el lugar."
+                    ).classes("text-sm text-stone-600")
+            for lugar in encontrados:
+                with ui.row().classes(
+                    "w-full items-center gap-3 no-wrap rounded-xl px-2 py-2 cursor-pointer hover:bg-green-50"
+                ).on("click", partial(elegir, lugar)):
+                    with ui.element("div").classes(
+                        "w-9 h-9 rounded-full bg-green-50 flex items-center justify-center shrink-0"
+                    ):
+                        ui.icon(lugar.icono, size="20px").classes("text-primary")
+                    with ui.column().classes("gap-0 min-w-0 flex-1"):
+                        ui.label(lugar.nombre).classes("font-semibold text-stone-900 leading-tight")
+                        detalle = " · ".join(x for x in (lugar.tipo, lugar.detalle_corto) if x)
+                        if detalle:
+                            ui.label(detalle).classes("text-xs text-stone-500 ellipsis")
+            ui.label("Datos de lugares © OpenStreetMap").classes("text-[10px] text-stone-400 px-2")
+        resultados.set_visibility(True)
+
+    def elegir(lugar) -> None:
+        estado.update(elegido=lugar, centro=(lugar.lat, lugar.lng))
+        resultados.set_visibility(False)
+        mapa.run_map_method("flyTo", [lugar.lat, lugar.lng], 17)
+        referencia.text = lugar.nombre + (f" · {lugar.detalle_corto}" if lugar.detalle_corto else "")
+
+    def al_mover(evento) -> None:
+        punto = _punto((getattr(evento, "args", None) or {}).get("center"))
+        if punto is None:
+            return
+        estado["centro"] = punto
+        elegido = estado["elegido"]
+        if elegido is not None and lugares.metros(*punto, elegido.lat, elegido.lng) > METROS_MISMO_LUGAR:
+            estado["elegido"] = None
+            referencia.text = "Punto elegido a mano: el evento queda donde apunta el pin."
+
+    def al_tocar(evento) -> None:
+        punto = _punto((getattr(evento, "args", None) or {}).get("latlng"))
+        if punto is not None:
+            mapa.run_map_method("panTo", list(punto))  # tocar = llevar el pin ahí
+
+    async def ir_a_mi_ubicacion() -> None:
+        boton_gps.props("loading")
+        try:
+            punto = _punto(await ui.run_javascript(JS_MI_UBICACION, timeout=15))
+        except Exception:
+            punto = None
+        finally:
+            boton_gps.props(remove="loading")
+        if punto is None:
+            ui.notify(
+                "No pudimos ver tu ubicación. Revisa que el navegador tenga permiso.",
+                type="warning",
+                position="top",
+            )
+            return
+        if not lugares.dentro_de_zona(*punto):
+            ui.notify(
+                f"Parece que no estás en {lugares.NOMBRE_ZONA}. Busca el lugar o mueve el mapa.",
+                type="info",
+                position="top",
+            )
+            return
+        estado.update(elegido=None, centro=punto)
+        mapa.run_map_method("flyTo", list(punto), 17)
+        referencia.text = "Tu ubicación actual. Ajusta el mapa si hace falta."
+
+    # Los métodos del mapa se llaman sin esperar respuesta (devuelven el mapa entero).
+    def acercar() -> None:
+        mapa.run_map_method("zoomIn")
+
+    def alejar() -> None:
+        mapa.run_map_method("zoomOut")
+
+    async def centro_actual() -> tuple[float, float]:
+        """Lo pregunta al navegador; si no responde, usa el último movimiento conocido."""
+        try:
+            punto = _punto(await mapa.run_map_method("getCenter", timeout=3))
+        except Exception:
+            punto = None
+        return punto or estado["centro"]
+
+    async def confirmar() -> None:
+        punto = await centro_actual()
+        if not lugares.dentro_de_zona(*punto):
+            ui.notify(
+                f"Por ahora solo se pueden marcar lugares de {lugares.NOMBRE_ZONA}.",
+                type="warning",
+                position="top",
+            )
+            return
+        elegido = estado["elegido"]
+        if elegido is not None and lugares.metros(*punto, elegido.lat, elegido.lng) > METROS_MISMO_LUGAR:
+            elegido = None
+        selector.close()
+        resultado = al_confirmar(punto[0], punto[1], elegido)
+        if asyncio.iscoroutine(resultado):
+            await resultado
+
+    with capa, ui.dialog().props(
+        "maximized transition-show=slide-up transition-hide=slide-down"
+    ) as selector:
+        with ui.element("div").classes("w-full h-full bg-white").style(
+            "display: flex; flex-direction: column; overflow: hidden"
+        ):
+            # Arriba: volver, título y buscador
+            with ui.element("div").classes("w-full bg-white px-3 pt-3 pb-3").style(
+                "flex: none; border-bottom: 1px solid #e7e5e4"
+            ):
+                with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                    ui.button(icon="arrow_back", on_click=selector.close).props(
+                        "flat round dense color=grey-9"
+                    )
+                    with ui.column().classes("gap-0 min-w-0"):
+                        ui.label("¿Dónde es el evento?").classes(
+                            "text-base font-bold text-stone-900 leading-tight"
+                        )
+                        ui.label("Mueve el mapa hasta dejar el pin en el lugar").classes(
+                            "text-xs text-stone-500"
+                        )
+                with ui.row().classes("w-full items-center gap-2 no-wrap mt-2"):
+                    campo = ui.input(
+                        placeholder="Cancha, calle, parque…", value=consulta
+                    ).props("outlined dense rounded enterkeyhint=search").classes("flex-1")
+                    with campo.add_slot("prepend"):
+                        ui.icon("search", size="20px").classes("text-stone-500")
+                    boton_buscar = ui.button("Buscar", on_click=buscar).props(
+                        "unelevated rounded no-caps color=primary"
+                    )
+                campo.on("keydown.enter", buscar)  # Enter = buscar (nunca mientras escribe)
+
+            # Al medio: el mapa con el pin fijo, resultados y botones flotantes
+            with ui.element("div").classes(clases_mapa()).style("flex: 1 1 auto; min-height: 0"):
+                mapa = mapa_base(
+                    centro_inicial, 17 if hay_punto else 14, opciones_selector()
+                )
+                mapa.on("map-moveend", al_mover)
+                mapa.on("map-click", al_tocar)
+                pin_centro()
+                resultados = ui.element("div").classes("absolute top-0 inset-x-0 p-2").style(
+                    "z-index: 1100; max-height: 70%; overflow-y: auto"
+                )
+                resultados.set_visibility(False)
+                with ui.column().classes("absolute gap-2 items-center").style(
+                    "right: 12px; bottom: 28px; z-index: 1050"
+                ):
+                    boton_gps = ui.button(icon="my_location", on_click=ir_a_mi_ubicacion).props(
+                        "round unelevated color=white text-color=primary"
+                    ).classes("shadow-md").tooltip("Mi ubicación")
+                    with ui.column().classes("gap-0 rounded-full bg-white shadow-md overflow-hidden"):
+                        ui.button(icon="add", on_click=acercar).props("flat round color=grey-9")
+                        ui.button(icon="remove", on_click=alejar).props("flat round color=grey-9")
+
+            # Abajo: a qué corresponde el punto y confirmar
+            with ui.element("div").classes("w-full bg-white px-4 pt-3").style(
+                "flex: none; border-top: 1px solid #e7e5e4; "
+                "padding-bottom: calc(16px + env(safe-area-inset-bottom))"
+            ):
+                with ui.row().classes("w-full items-center gap-3 no-wrap"):
+                    ui.icon("place", size="22px").classes("text-primary shrink-0")
+                    referencia = ui.label(
+                        "Este es el punto que marcaste. Mueve el mapa si hace falta."
+                        if hay_punto
+                        else "Busca el lugar o mueve el mapa: el evento queda donde apunta el pin."
+                    ).classes("text-sm text-stone-700 leading-snug")
+                ui.button("Usar este punto", icon="check", on_click=confirmar).props(
+                    "unelevated rounded no-caps color=primary size=lg"
+                ).classes("w-full mt-3")
+
+    selector.on("hide", selector.delete)  # se borra al cerrarse
+    selector.open()
 
 
 def texto_hace(momento: datetime, referencia: datetime) -> str:
@@ -344,6 +626,7 @@ ESTILO_ACCION = (
 def preparar_pagina() -> None:
     ui.colors(primary=COLOR_PRINCIPAL)
     ui.query("body").style(f"background-color: {FONDO}; font-family: {FUENTE}")
+    ui.add_head_html(ESTILOS_MAPA)
 
 
 def encabezado(persona_id: str | None) -> Callable[[], None]:
@@ -873,161 +1156,93 @@ def abrir_dialogo_crear(
     ).style("width: 540px; max-width: 94vw"):
         cuerpo = ui.column().classes("w-full p-6 gap-4")
 
-    # Ubicación exacta (opcional). "texto_auto" es la dirección que escribimos
-    # nosotros al tocar el mapa: esa se puede reemplazar; lo que escribió la
-    # persona, nunca. "turno" deja valer solo el último toque.
-    ubicacion: dict = {"lat": None, "lng": None, "texto_auto": None, "turno": 0}
-    vista: dict = {"mapa": None, "marcador": None, "ayuda": None, "nota": None}
-
-    async def buscar_lugar() -> None:
-        boton_buscar.props("loading")
-        try:
-            encontrados = await asyncio.to_thread(lugares.buscar, campo_lugar.value)
-        except lugares.ErrorBusqueda as error:
-            ui.notify(str(error), type="warning", position="top")
-            return
-        finally:
-            boton_buscar.props(remove="loading")
-        resultados.clear()
-        with resultados:
-            if not encontrados:
-                with ui.row().classes("w-full items-center gap-3 no-wrap rounded-xl bg-stone-100 p-3"):
-                    ui.icon("search_off", size="22px").classes("text-stone-500 shrink-0")
-                    with ui.column().classes("gap-1"):
-                        ui.label(f"No encontramos eso en {lugares.NOMBRE_ZONA}.").classes(
-                            "text-sm font-semibold text-stone-800"
-                        )
-                        ui.label(
-                            "Prueba con otro nombre o una calle, o márcalo tú en el mapa."
-                        ).classes("text-xs text-stone-600")
-                        ui.button(
-                            "Marcar en el mapa", icon="add_location_alt", on_click=lambda: abrir_mapa()
-                        ).props("flat rounded no-caps dense color=primary").classes("self-start -ml-2")
-                return
-            ui.label(f"Resultados en {lugares.NOMBRE_ZONA} · toca el correcto").classes(
-                "text-xs font-semibold text-stone-600"
-            )
-            for lugar in encontrados:
-                with ui.row().classes(
-                    "w-full items-center gap-3 no-wrap rounded-xl border border-stone-200 bg-white "
-                    "px-3 py-2 cursor-pointer hover:border-green-700 hover:bg-green-50"
-                ).on("click", partial(elegir_lugar, lugar)):
-                    with ui.element("div").classes(
-                        "w-9 h-9 rounded-full bg-green-50 flex items-center justify-center shrink-0"
-                    ):
-                        ui.icon(lugar.icono, size="20px").classes("text-primary")
-                    with ui.column().classes("gap-0 min-w-0 flex-1"):
-                        ui.label(lugar.nombre).classes("font-semibold text-stone-900 leading-tight")
-                        detalle = " · ".join(x for x in (lugar.tipo, lugar.detalle_corto) if x)
-                        if detalle:
-                            ui.label(detalle).classes("text-xs text-stone-500 ellipsis")
-                    ui.icon("chevron_right", size="20px").classes("text-stone-400 shrink-0")
-            with ui.row().classes("w-full items-center justify-between gap-2"):
-                ui.button(
-                    "¿No está? Márcalo en el mapa", on_click=lambda: abrir_mapa()
-                ).props("flat rounded no-caps dense color=primary").classes("-ml-2")
-                ui.label("Datos de lugares © OpenStreetMap").classes("text-[11px] text-stone-400")
-
-    def elegir_lugar(lugar: lugares.Lugar) -> None:
-        campo_lugar.value = lugar.texto
-        ubicacion["texto_auto"] = None  # lo eligió la persona: no se reemplaza
-        mostrar_mapa(lugar.lat, lugar.lng)  # ya trae su marcador
-        anotar_punto(lugar.lat, lugar.lng)
-
-    def abrir_mapa() -> None:
-        mostrar_mapa(ubicacion["lat"], ubicacion["lng"])
-
-    def mostrar_mapa(lat: float | None = None, lng: float | None = None) -> None:
-        resultados.clear()
-        caja_mapa.clear()
-        vista.update(mapa=None, marcador=None)
-        with caja_mapa:
-            with ui.row().classes("w-full items-center gap-2 no-wrap"):
-                ui.icon("touch_app", size="18px").classes("text-primary shrink-0")
-                vista["ayuda"] = ui.label(
-                    "¿Es aquí? Si no, toca el punto correcto."
-                    if lat is not None
-                    else "Toca el mapa donde será el evento. Acércate con + y −."
-                ).classes("text-xs font-semibold text-stone-700")
-            dibujo = dibujar_mapa(lat, lng, alto="h-64")
-            if dibujo:
-                vista["mapa"], vista["marcador"] = dibujo
-                vista["mapa"].on("map-click", tocar_mapa)
-            vista["nota"] = ui.label("").classes("text-xs text-stone-500")
-            with ui.row().classes("w-full items-center justify-between gap-2"):
-                ui.label(f"Solo lugares de {lugares.NOMBRE_ZONA}").classes("text-[11px] text-stone-400")
-                ui.button("Quitar ubicación", icon="location_off", on_click=quitar_ubicacion).props(
-                    "flat rounded no-caps dense color=grey-8"
-                )
-
-    def poner_punto(lat: float, lng: float) -> None:
-        if vista["marcador"] is not None:
-            vista["marcador"].move(lat, lng)
-        elif vista["mapa"] is not None:
-            vista["marcador"] = Marcador(vista["mapa"], lat, lng)
-        anotar_punto(lat, lng)
-
-    def anotar_punto(lat: float, lng: float) -> None:
-        ubicacion.update(lat=lat, lng=lng)
-        estado_ubicacion.text = "📍 Ubicación marcada"
-        if vista["ayuda"] is not None:
-            vista["ayuda"].text = "¿Es aquí? Si no, toca el punto correcto."
-
-    async def tocar_mapa(evento) -> None:
-        try:
-            lat = float(evento.args["latlng"]["lat"])
-            lng = float(evento.args["latlng"]["lng"])
-        except (KeyError, TypeError, ValueError):
-            return
-        if not lugares.dentro_de_zona(lat, lng):
-            ui.notify(
-                f"Por ahora solo se pueden marcar lugares de {lugares.NOMBRE_ZONA}.",
-                type="warning",
-                position="top",
-            )
-            return
-        poner_punto(lat, lng)
-        await sugerir_direccion(lat, lng)
+    # Ubicación exacta (opcional), elegida en el selector a pantalla completa.
+    # "texto_auto" es lo que escribimos nosotros en «Lugar» (desde el mapa): eso
+    # se puede reemplazar; lo que escribió la persona, nunca. "turno" deja valer
+    # solo la última elección si llegan dos respuestas.
+    ubicacion: dict = {"lat": None, "lng": None, "texto_auto": None, "turno": 0, "direccion": None}
+    vista: dict = {"direccion": None}
 
     def escrito_por_la_persona() -> bool:
         texto = (campo_lugar.value or "").strip()
         return bool(texto) and texto != ubicacion["texto_auto"]
 
-    async def sugerir_direccion(lat: float, lng: float) -> None:
-        """Si el campo «Lugar» está vacío, escribe la dirección del punto tocado."""
-        if escrito_por_la_persona():
-            return
+    def abrir_selector() -> None:
+        abrir_selector_ubicacion(
+            capa,
+            lat=ubicacion["lat"],
+            lng=ubicacion["lng"],
+            consulta=(campo_lugar.value or "").strip() if escrito_por_la_persona() else "",
+            al_confirmar=al_elegir_punto,
+        )
+
+    def pintar_ubicacion() -> None:
+        caja_ubicacion.clear()
+        vista["direccion"] = None
+        with caja_ubicacion:
+            if ubicacion["lat"] is None:
+                with ui.row().classes(
+                    "w-full items-center gap-3 no-wrap rounded-2xl border border-dashed border-stone-300 "
+                    "bg-stone-50 px-3 py-3 cursor-pointer hover:border-green-700 hover:bg-green-50"
+                ).on("click", abrir_selector):
+                    with ui.element("div").classes(
+                        "w-10 h-10 rounded-full bg-white border border-stone-200 "
+                        "flex items-center justify-center shrink-0"
+                    ):
+                        ui.icon("add_location_alt", size="22px").classes("text-primary")
+                    with ui.column().classes("gap-0 flex-1 min-w-0"):
+                        ui.label("Marcar en el mapa").classes("font-semibold text-stone-900 leading-tight")
+                        ui.label("Opcional · así «Cómo llegar» lleva al punto exacto").classes(
+                            "text-xs text-stone-500"
+                        )
+                    ui.icon("chevron_right", size="22px").classes("text-stone-400 shrink-0")
+                return
+            dibujo = mapa_de_vista(ubicacion["lat"], ubicacion["lng"], alto="8.5rem", controles=False)
+            if dibujo:
+                dibujo[1].on("map-click", abrir_selector)  # tocar la vista previa = cambiar
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                ui.icon("check_circle", size="20px").classes("text-primary shrink-0")
+                with ui.column().classes("gap-0 flex-1 min-w-0"):
+                    ui.label("Ubicación marcada").classes("text-sm font-semibold text-stone-900 leading-tight")
+                    vista["direccion"] = ui.label(ubicacion["direccion"] or "Punto marcado en el mapa").classes(
+                        "text-xs text-stone-500 ellipsis"
+                    )
+                ui.button("Cambiar", on_click=abrir_selector).props("flat rounded no-caps dense color=primary")
+                ui.button("Quitar", on_click=quitar_ubicacion).props("flat rounded no-caps dense color=grey-8")
+
+    async def al_elegir_punto(lat: float, lng: float, lugar) -> None:
+        ubicacion.update(lat=lat, lng=lng)
         ubicacion["turno"] += 1
         turno = ubicacion["turno"]
-        if vista["nota"] is not None:
-            vista["nota"].text = "Buscando la dirección…"
-        await asyncio.sleep(ESPERA_DIRECCION)  # si toca de nuevo, vale el último toque
-        if turno != ubicacion["turno"]:
+        if lugar is not None:  # eligió un resultado de la búsqueda
+            ubicacion["direccion"] = lugar.nombre + (f" · {lugar.detalle_corto}" if lugar.detalle_corto else "")
+            if not escrito_por_la_persona():
+                campo_lugar.value = lugar.texto
+                ubicacion["texto_auto"] = lugar.texto
+            pintar_ubicacion()
             return
+        ubicacion["direccion"] = "Buscando la dirección…"
+        pintar_ubicacion()
         try:
             texto = await asyncio.to_thread(lugares.direccion_de, lat, lng)
         except Exception:
             texto = None
-        if turno != ubicacion["turno"] or escrito_por_la_persona():
+        if turno != ubicacion["turno"]:  # ya eligió otro punto o lo quitó
             return
+        ubicacion["direccion"] = f"Cerca de {texto}" if texto else "Punto marcado en el mapa"
         try:
-            if texto:
+            if texto and not escrito_por_la_persona():
                 campo_lugar.value = texto
                 ubicacion["texto_auto"] = texto
-                aviso = "Escribimos la dirección aproximada. Puedes cambiarla por el nombre del lugar."
-            else:
-                aviso = "No encontramos la dirección de ese punto: escribe el nombre del lugar arriba."
-            if vista["nota"] is not None:
-                vista["nota"].text = aviso
-        except Exception:  # el diálogo se cerró mientras buscábamos
+            if vista["direccion"] is not None:
+                vista["direccion"].text = ubicacion["direccion"]
+        except Exception:  # el formulario se cerró mientras buscábamos
             pass
 
     def quitar_ubicacion() -> None:
-        ubicacion.update(lat=None, lng=None)
+        ubicacion.update(lat=None, lng=None, direccion=None)
         ubicacion["turno"] += 1  # descarta una dirección que venía en camino
-        vista.update(mapa=None, marcador=None, ayuda=None, nota=None)
-        estado_ubicacion.text = ""
-        caja_mapa.clear()
+        pintar_ubicacion()
 
     def actualizar_valor() -> None:
         con_costo = campo_cobro.value == "pago"
@@ -1123,25 +1338,12 @@ def abrir_dialogo_crear(
         ).classes("w-full")
 
         campo_lugar = ui.input(
-            "Lugar", placeholder="Ej: Parque Chuyaca o Bulnes 750", validation=SIN_GROSERIAS
+            "Lugar", placeholder="Ej: Cancha del liceo, Parque Chuyaca", validation=SIN_GROSERIAS
         ).props(
-            f"outlined maxlength={datos.LARGO_LUGAR[1]} enterkeyhint=search"
+            f"outlined maxlength={datos.LARGO_LUGAR[1]}"
         ).classes("w-full")
-        campo_lugar.on("keydown.enter", buscar_lugar)  # Enter = buscar (nunca mientras escribe)
-        with ui.row().classes("w-full items-center gap-2 -mt-2"):
-            boton_buscar = ui.button(
-                f"Buscar en {lugares.NOMBRE_ZONA}", icon="search", on_click=buscar_lugar
-            ).props("outline rounded no-caps dense color=primary").classes("px-2")
-            ui.button("Marcar en el mapa", icon="add_location_alt", on_click=abrir_mapa).props(
-                "outline rounded no-caps dense color=primary"
-            ).classes("px-2")
-            estado_ubicacion = ui.label("").classes("text-xs font-semibold text-primary")
-        ui.label(
-            "Busca por nombre o calle, o marca el punto en el mapa. Es opcional, pero con el "
-            "punto exacto «Cómo llegar» lleva directo al lugar."
-        ).classes("text-xs text-stone-500 -mt-2")
-        resultados = ui.column().classes("w-full gap-2")
-        caja_mapa = ui.column().classes("w-full gap-2")
+        caja_ubicacion = ui.column().classes("w-full gap-2 -mt-2")
+        pintar_ubicacion()
 
         with ui.row().classes("w-full gap-3 no-wrap"):
             campo_fecha = ui.input("Fecha", value=sugerida.strftime("%Y-%m-%d")).props(
@@ -1400,10 +1602,12 @@ def pagina_aviso(aviso_id: int, request: Request) -> None:
         if aviso_inicial is not None and aviso_inicial.tiene_ubicacion and not aviso_inicial.cancelado:
             with ui.card().classes("w-full rounded-2xl shadow-none border border-stone-200 p-5 gap-3"):
                 ui.label("Ubicación").classes("text-lg font-black text-stone-900")
-                dibujar_mapa(aviso_inicial.lat, aviso_inicial.lng)
-                ui.link("📍 Cómo llegar", url_mapa_de(aviso_inicial), new_tab=True).classes(
-                    ESTILO_ACCION + " self-start"
-                )
+                mapa_de_vista(aviso_inicial.lat, aviso_inicial.lng)
+                with ui.row().classes("w-full items-center justify-between gap-3"):
+                    ui.label(aviso_inicial.lugar).classes("text-sm text-stone-600 min-w-0 flex-1")
+                    ui.link("📍 Cómo llegar", url_mapa_de(aviso_inicial), new_tab=True).classes(
+                        ESTILO_ACCION + " shrink-0"
+                    )
         if aviso_inicial is not None:
             with ui.card().classes("w-full rounded-2xl shadow-none border border-stone-200 p-5 gap-3"):
                 lista_comentarios()

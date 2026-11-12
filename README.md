@@ -135,11 +135,12 @@ Qué hay en el panel:
   eliminar cualquiera. Quienes se habían unido lo ven en su buzón como
   "Cancelado por la administración".
 
-### Paso 6 — Mapa con estilo moderno (opcional)
+### Paso 6 — Mapa con estilo moderno (recomendado)
 
-Los mapas usan el estilo **Voyager de CARTO** (colores suaves y calles
-claras) si existe la variable `CARTO_KEY`. Sin ella se usa el mapa estándar
-de OpenStreetMap, que funciona igual pero se ve más anticuado.
+Los mapas usan el estilo **Voyager de CARTO** (colores suaves, calles claras
+y nítido en celulares) si existe la variable `CARTO_KEY`. Sin ella se usa el
+mapa estándar de OpenStreetMap con los colores suavizados: funciona igual,
+pero se ve más anticuado y algo borroso en pantallas de celular.
 
 1. Pide una clave gratis en **carto.com/basemaps/apikey**: llega por correo
    al instante y no necesitas crear cuenta. Gratis hasta 5 millones de
@@ -162,14 +163,15 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
 1. Toca el botón **+** y completa el aviso: título, categoría, lugar, fecha,
    hora, cuántos son, cuántos necesitan, detalles y si dura **24 o 48 horas**.
    Quien publica **no necesita escribir su nombre**.
-   - **Lugar, solo en Osorno (opcional pero útil):** hay dos caminos.
-     **Buscar en Osorno**: escribe el nombre o la calle (ej. «Parque Chuyaca»
-     o «Bulnes 750») y toca el botón o Enter; aparecen lugares de Osorno con
-     un ícono y su tipo (cancha, café, parque…). **Marcar en el mapa**: se abre
-     Osorno y se toca el punto; si el campo «Lugar» está vacío, se escribe solo
-     la dirección aproximada (se puede cambiar por un nombre, ej. «Cancha del
-     liceo»). En ambos casos se puede tocar el mapa para afinar el punto, y
-     «Cómo llegar» lleva directo ahí. El mapa no deja irse a otras regiones.
+   - **Lugar:** se escribe el nombre (ej. «Cancha del liceo»). Opcional:
+     **Marcar en el mapa** abre un selector a pantalla completa, como en las
+     apps de delivery: el pin queda fijo al centro y se mueve el mapa debajo
+     (o se toca un punto). Arriba hay un buscador de lugares de Osorno (con
+     ícono y tipo: cancha, café, parque…) y abajo a la derecha, **mi
+     ubicación** y el zoom. Se confirma con **Usar este punto**. El formulario
+     muestra una vista previa con la dirección aproximada; si «Lugar» estaba
+     vacío, se escribe solo. El mapa no deja irse a otras regiones, y «Cómo
+     llegar» lleva directo al punto.
    - **Valor por persona:** «Gratis ($0)» o «Tiene costo». El monto solo
      acepta números en pesos (2000 o 2.000), muestra cómo se verá
      («$2.000 por persona») y tiene un tope de **$80.000**.
