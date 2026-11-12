@@ -162,11 +162,14 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
 1. Toca el botón **+** y completa el aviso: título, categoría, lugar, fecha,
    hora, cuántos son, cuántos necesitan, detalles y si dura **24 o 48 horas**.
    Quien publica **no necesita escribir su nombre**.
-   - **Buscar en el mapa (opcional):** escribe el nombre del lugar y la comuna
-     (ej. «El Huerto Providencia») y toca el botón: aparecen lugares reales con
-     su dirección. Al elegir uno se muestra un mapa para confirmar; si el punto
-     no es exacto, se toca el mapa para moverlo. Así «Cómo llegar» lleva
-     directo a ese punto.
+   - **Lugar, solo en Osorno (opcional pero útil):** hay dos caminos.
+     **Buscar en Osorno**: escribe el nombre o la calle (ej. «Parque Chuyaca»
+     o «Bulnes 750») y toca el botón o Enter; aparecen lugares de Osorno con
+     un ícono y su tipo (cancha, café, parque…). **Marcar en el mapa**: se abre
+     Osorno y se toca el punto; si el campo «Lugar» está vacío, se escribe solo
+     la dirección aproximada (se puede cambiar por un nombre, ej. «Cancha del
+     liceo»). En ambos casos se puede tocar el mapa para afinar el punto, y
+     «Cómo llegar» lleva directo ahí. El mapa no deja irse a otras regiones.
    - **Valor por persona:** «Gratis ($0)» o «Tiene costo». El monto solo
      acepta números en pesos (2000 o 2.000), muestra cómo se verá
      («$2.000 por persona») y tiene un tope de **$80.000**.
@@ -241,12 +244,13 @@ en un archivo local `avisos.db`, aparte de los de internet.
 | `app.py`           | La interfaz: páginas, tarjetas, formularios. Aquí se cambia el diseño. |
 | `datos.py`         | Las reglas (cupos, plazos, validaciones) y la base de datos. |
 | `filtro.py`        | El filtro de palabras inapropiadas y sus listas. |
-| `lugares.py`       | El buscador de lugares (OpenStreetMap: Photon y Nominatim). |
+| `lugares.py`       | El buscador de lugares de Osorno (OpenStreetMap: Photon y Nominatim). |
 | `requirements.txt` | Las librerías que instala Render. |
 | `render.yaml`      | Las instrucciones para que Render publique la página gratis. |
 
 Ajustes rápidos: zona horaria (`ZONA_HORARIA`) y categorías (`CATEGORIAS`) en
-`datos.py`; colores (`COLOR_PRINCIPAL`, `FONDO`) e íconos (`ICONOS`) en `app.py`.
+`datos.py`; colores (`COLOR_PRINCIPAL`, `FONDO`) e íconos (`ICONOS`) en `app.py`;
+ciudad del mapa y del buscador (`NOMBRE_ZONA`, `CENTRO`, `ZONA`) en `lugares.py`.
 
 ## Sobre el buscador de lugares
 
@@ -255,7 +259,14 @@ Usa servicios gratuitos de OpenStreetMap, sin claves: **Photon**
 Nominatim tiene una política de uso que hay que respetar
 (https://operations.osmfoundation.org/policies/nominatim/): solo búsquedas
 que la persona pide (no autocompletar), máximo 1 por segundo, identificarse y
-dar crédito a OpenStreetMap. `lugares.py` lo cumple: busca solo al tocar el
-botón, espera 1 segundo entre consultas, recuerda las búsquedas repetidas y
-muestra «© OpenStreetMap». Sirve para un uso moderado; con muchísimos
-usuarios habría que usar un servicio propio o de pago.
+dar crédito a OpenStreetMap. `lugares.py` lo cumple: consulta solo al tocar
+«Buscar» o al tocar el mapa (y en ese caso espera a que la persona deje de
+tocar), espera 1 segundo entre consultas, recuerda lo ya consultado y muestra
+«© OpenStreetMap». Sirve para un uso moderado; con muchísimos usuarios
+habría que usar un servicio propio o de pago.
+
+**Solo Osorno:** los servicios reciben el recuadro de Osorno (en Nominatim con
+`viewbox` + `bounded=1`, que limita los resultados a ese recuadro) y además se
+descarta cualquier resultado que caiga fuera. El mapa tiene `maxBounds` y un
+zoom mínimo, así que no se puede arrastrar ni alejar a otras regiones. Para
+cambiar de ciudad basta con editar `CENTRO` y `ZONA` en `lugares.py`.
