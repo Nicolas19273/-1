@@ -235,11 +235,52 @@ def url_mapa_de(aviso: datos.Aviso) -> str:
     return url_mapa(aviso.lugar, aviso.lat, aviso.lng)
 
 
-def mapa_con_marcador(lat: float, lng: float, alto: str = "h-56"):
-    """Mapa (OpenStreetMap) centrado en el punto, con un marcador. None si no se pudo dibujar."""
+# Estilo del mapa: CARTO Voyager (moderno) si hay clave en la variable de
+# entorno CARTO_KEY (gratis: carto.com/basemaps/apikey). Sin clave se usa el
+# mapa estándar de OpenStreetMap. Ver README.
+CARTO_KEY = os.environ.get("CARTO_KEY", "").strip()
+URL_CARTO = "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key="
+CREDITO_CARTO = (
+    '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, '
+    '© <a href="https://carto.com/attributions">CARTO</a>'
+)
+OPCIONES_MAPA = {"scrollWheelZoom": False}  # que la rueda del mouse no atrape la página
+
+
+class Marcador:
+    """Punto en el color de la página, con un halo suave (más moderno que el alfiler azul)."""
+
+    def __init__(self, mapa, lat: float, lng: float) -> None:
+        self.halo = mapa.generic_layer(
+            name="circleMarker",
+            args=[(lat, lng), {"radius": 22, "stroke": False, "fillColor": COLOR_PRINCIPAL, "fillOpacity": 0.18}],
+        )
+        self.punto = mapa.generic_layer(
+            name="circleMarker",
+            args=[
+                (lat, lng),
+                {"radius": 9, "color": "#ffffff", "weight": 3, "fillColor": COLOR_PRINCIPAL, "fillOpacity": 1},
+            ],
+        )
+
+    def move(self, lat: float, lng: float) -> None:
+        for capa in (self.halo, self.punto):
+            capa.run_method("setLatLng", [lat, lng])
+
+
+def mapa_con_marcador(lat: float, lng: float, alto: str = "h-60"):
+    """Mapa centrado en el punto, con su marcador. None si no se pudo dibujar."""
     try:
-        mapa = ui.leaflet(center=(lat, lng), zoom=16).classes(f"w-full {alto} rounded-xl")
-        marcador = mapa.marker(latlng=(lat, lng))
+        mapa = ui.leaflet(center=(lat, lng), zoom=16, options=OPCIONES_MAPA).classes(
+            f"w-full {alto} rounded-2xl overflow-hidden border border-stone-200"
+        )
+        if CARTO_KEY:
+            mapa.clear_layers()
+            mapa.tile_layer(
+                url_template=URL_CARTO + CARTO_KEY,
+                options={"maxZoom": 20, "attribution": CREDITO_CARTO},
+            )
+        marcador = Marcador(mapa, lat, lng)
         # por si el mapa se dibuja dentro de algo que recién aparece (un diálogo)
         ui.timer(0.4, lambda: mapa.run_map_method("invalidateSize"), once=True)
         return mapa, marcador

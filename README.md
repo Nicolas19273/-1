@@ -135,6 +135,21 @@ Qué hay en el panel:
   eliminar cualquiera. Quienes se habían unido lo ven en su buzón como
   "Cancelado por la administración".
 
+### Paso 6 — Mapa con estilo moderno (opcional)
+
+Los mapas usan el estilo **Voyager de CARTO** (colores suaves y calles
+claras) si existe la variable `CARTO_KEY`. Sin ella se usa el mapa estándar
+de OpenStreetMap, que funciona igual pero se ve más anticuado.
+
+1. Pide una clave gratis en **carto.com/basemaps/apikey**: llega por correo
+   al instante y no necesitas crear cuenta. Gratis hasta 5 millones de
+   solicitudes de mapa al mes.
+2. En Render → servicio `falta-uno` → **Environment** → **Edit** →
+   **Add Environment Variable**: Key `CARTO_KEY`, Value: la clave → **Save**.
+
+El crédito «© OpenStreetMap contributors, © CARTO» se muestra en el mapa,
+como piden sus condiciones.
+
 ### Hacer cambios después
 
 Edita un archivo en GitHub (o súbelo de nuevo) y Render publica la versión
