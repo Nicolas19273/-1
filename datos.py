@@ -28,6 +28,9 @@ Reglas:
     después de que empieza el evento, para recordar dónde y cuándo es.
   * Quien publicó un aviso puede eliminarlo. Sale del tablero y de su buzón;
     a quienes se habían unido les queda en el buzón marcado como cancelado.
+  * Cualquiera puede comentar un aviso (comentarios cortos, con el mismo filtro).
+  * Cualquiera puede denunciar un aviso ajeno una vez. Con 3 denuncias sin
+    revisar, el aviso se oculta del tablero hasta que la administración lo vea.
   * Quien se unió puede salirse antes de que empiece el evento. Su cupo queda
     libre y, si el aviso sigue dentro de plazo, vuelve a aparecer en el
     tablero (eso pasa solo: el tablero siempre muestra los avisos con cupo).
@@ -118,6 +121,7 @@ class Aviso:
     cancelado_en: datetime | None  # cuándo se eliminó (None si sigue)
     cancelado_por: str | None  # "dueño" o "admin"
     inscritos: tuple[Participante, ...]  # quienes se unieron desde la página
+    comentarios: int = 0  # cuántos comentarios visibles tiene
 
     @property
     def participantes(self) -> tuple[str, ...]:
@@ -223,7 +227,27 @@ CREATE TABLE IF NOT EXISTS filtrados (
 CREATE TABLE IF NOT EXISTS administradores (
     persona_id TEXT    PRIMARY KEY,
     desde      INTEGER NOT NULL
-)
+);
+CREATE TABLE IF NOT EXISTS comentarios (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    aviso_id   INTEGER NOT NULL REFERENCES avisos(id) ON DELETE CASCADE,
+    persona_id TEXT,
+    nombre     TEXT    NOT NULL,
+    texto      TEXT    NOT NULL,
+    momento    INTEGER NOT NULL,
+    borrado    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_comentarios_aviso ON comentarios(aviso_id);
+CREATE TABLE IF NOT EXISTS denuncias (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    aviso_id   INTEGER NOT NULL REFERENCES avisos(id) ON DELETE CASCADE,
+    persona_id TEXT    NOT NULL,
+    motivo     TEXT    NOT NULL,
+    comentario TEXT    NOT NULL DEFAULT '',
+    momento    INTEGER NOT NULL,
+    revisada   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_denuncias_aviso ON denuncias(aviso_id)
 """
 
 _ESQUEMA_POSTGRES = """
@@ -267,7 +291,27 @@ CREATE TABLE IF NOT EXISTS filtrados (
 CREATE TABLE IF NOT EXISTS administradores (
     persona_id TEXT   PRIMARY KEY,
     desde      BIGINT NOT NULL
-)
+);
+CREATE TABLE IF NOT EXISTS comentarios (
+    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    aviso_id   BIGINT  NOT NULL REFERENCES avisos(id) ON DELETE CASCADE,
+    persona_id TEXT,
+    nombre     TEXT    NOT NULL,
+    texto      TEXT    NOT NULL,
+    momento    BIGINT  NOT NULL,
+    borrado    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_comentarios_aviso ON comentarios(aviso_id);
+CREATE TABLE IF NOT EXISTS denuncias (
+    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    aviso_id   BIGINT  NOT NULL REFERENCES avisos(id) ON DELETE CASCADE,
+    persona_id TEXT    NOT NULL,
+    motivo     TEXT    NOT NULL,
+    comentario TEXT    NOT NULL DEFAULT '',
+    momento    BIGINT  NOT NULL,
+    revisada   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_denuncias_aviso ON denuncias(aviso_id)
 """
 # (los horarios se guardan como segundos Unix: un número entero)
 
@@ -484,7 +528,7 @@ def _sin_groserias(
         )
 
 
-def _fila_a_aviso(fila, inscritos: list[Participante]) -> Aviso:
+def _fila_a_aviso(fila, inscritos: list[Participante], comentarios: int = 0) -> Aviso:
     # Lo guardado antes del filtro (o con palabras que se agreguen a la lista
     # después) se muestra sin esas palabras.
     return Aviso(
@@ -504,6 +548,7 @@ def _fila_a_aviso(fila, inscritos: list[Participante]) -> Aviso:
         cancelado_en=_de_ts(fila["cancelado_en"]) if fila["cancelado_en"] is not None else None,
         cancelado_por=fila["cancelado_por"],
         inscritos=tuple(inscritos),
+        comentarios=comentarios,
     )
 
 
@@ -530,8 +575,22 @@ def _leer_avisos(con: _Conexion, sql: str, parametros) -> list[Aviso]:
         if int(fila["id"]) not in vistos:
             vistos.add(int(fila["id"]))
             filas.append(fila)
-    inscritos = _inscritos_de(con, [int(f["id"]) for f in filas])
-    return [_fila_a_aviso(f, inscritos[int(f["id"])]) for f in filas]
+    ids = [int(f["id"]) for f in filas]
+    inscritos = _inscritos_de(con, ids)
+    cuantos = _contar_comentarios(con, ids)
+    return [_fila_a_aviso(f, inscritos[int(f["id"])], cuantos.get(int(f["id"]), 0)) for f in filas]
+
+
+def _contar_comentarios(con: _Conexion, ids: list[int]) -> dict[int, int]:
+    if not ids:
+        return {}
+    marcas = ",".join("?" * len(ids))
+    filas = con.ejecutar(
+        f"SELECT aviso_id, COUNT(*) AS n FROM comentarios "
+        f"WHERE aviso_id IN ({marcas}) AND borrado = 0 GROUP BY aviso_id",
+        ids,
+    ).fetchall()
+    return {int(f["aviso_id"]): int(f["n"]) for f in filas}
 
 
 # --------------------------------------------------------------------------- #
@@ -666,11 +725,13 @@ def avisos_activos(ahora: datetime | None = None) -> list[Aviso]:
                 FROM avisos a
                 LEFT JOIN participantes p ON p.aviso_id = a.id
                 WHERE a.expira_en > ? AND a.inicio_evento > ? AND a.cancelado_en IS NULL
+                  AND (SELECT COUNT(*) FROM denuncias d
+                       WHERE d.aviso_id = a.id AND d.revisada = 0) < ?
                 GROUP BY a.id
                 HAVING a.personas_actuales + COUNT(p.id) < a.personas_necesarias
                 ORDER BY a.inicio_evento ASC, a.id ASC
                 """,
-                (ts, ts),
+                (ts, ts, UMBRAL_DENUNCIAS),
             )
         with _candado:
             if version == _version:
@@ -859,6 +920,7 @@ def eliminar_aviso(
             "UPDATE avisos SET cancelado_en = ?, cancelado_por = ? WHERE id = ?",
             (_a_ts(ahora), por, aviso_id),
         )
+        con.ejecutar("UPDATE denuncias SET revisada = 1 WHERE aviso_id = ?", (aviso_id,))
     _invalidar_cache()
 
     actualizado = obtener_aviso(aviso_id)
@@ -1027,6 +1089,9 @@ def estadisticas(ahora: datetime | None = None) -> dict[str, int]:
         "bloqueos_7d": ("SELECT COUNT(*) AS n FROM filtrados WHERE momento > ?", (semana,)),
         "avisos_total": ("SELECT COUNT(*) AS n FROM avisos", ()),
         "reglas": ("SELECT COUNT(*) AS n FROM reglas_filtro", ()),
+        "denuncias_pendientes": (
+            "SELECT COUNT(DISTINCT aviso_id) AS n FROM denuncias WHERE revisada = 0", ()
+        ),
     }
     with _conexion() as con:
         cifras = {k: int(con.ejecutar(sql, par).fetchone()["n"]) for k, (sql, par) in consultas.items()}
@@ -1040,3 +1105,223 @@ def quitar_todos_los_admin() -> int:
         n = int(con.ejecutar("SELECT COUNT(*) AS n FROM administradores").fetchone()["n"])
         con.ejecutar("DELETE FROM administradores")
     return n
+
+
+# --------------------------------------------------------------------------- #
+# Comentarios
+# --------------------------------------------------------------------------- #
+
+LARGO_MAX_COMENTARIO = 200
+SEGUNDOS_ENTRE_COMENTARIOS = 10  # para evitar spam
+
+
+@dataclass(frozen=True)
+class Comentario:
+    id: int
+    aviso_id: int
+    persona_id: str | None
+    nombre: str  # vacío si lo escribió quien organiza
+    texto: str
+    momento: datetime
+
+
+def comentarios_de(aviso_id: int) -> list[Comentario]:
+    """Comentarios visibles de un aviso, del más antiguo al más nuevo."""
+    with _conexion() as con:
+        filas = con.ejecutar(
+            "SELECT * FROM comentarios WHERE aviso_id = ? AND borrado = 0 ORDER BY momento, id",
+            (aviso_id,),
+        ).fetchall()
+    resultado = []
+    for f in filas:
+        texto = filtro.quitar(f["texto"])  # por si se agregó una regla después
+        if texto:
+            resultado.append(
+                Comentario(
+                    id=int(f["id"]),
+                    aviso_id=int(f["aviso_id"]),
+                    persona_id=f["persona_id"],
+                    nombre=filtro.quitar(f["nombre"]),
+                    texto=texto,
+                    momento=_de_ts(f["momento"]),
+                )
+            )
+    return resultado
+
+
+def comentar(
+    aviso_id: int,
+    persona_id: str | None,
+    nombre: str,
+    texto: str,
+    ahora: datetime | None = None,
+) -> Comentario:
+    """Publica un comentario corto. Quien organiza no necesita nombre."""
+    ahora = _ahora(ahora)
+    if not persona_id:
+        raise ErrorValidacion("No pudimos reconocer tu navegador. Recarga la página.")
+    texto = limpiar(texto)
+    if not texto:
+        raise ErrorValidacion("Escribe un comentario.")
+    if len(texto) > LARGO_MAX_COMENTARIO:
+        raise ErrorValidacion(f"El comentario puede tener hasta {LARGO_MAX_COMENTARIO} caracteres.")
+
+    aviso = obtener_aviso(aviso_id)
+    if aviso is None:
+        raise ErrorValidacion("Este aviso no existe.")
+    if aviso.cancelado:
+        raise ErrorValidacion("Este aviso fue cancelado: ya no se puede comentar.")
+    if ahora >= aviso.visible_en_buzon_hasta:
+        raise ErrorValidacion("Los comentarios de este aviso ya están cerrados.")
+
+    if aviso.es_de(persona_id):
+        nombre = ""
+    else:
+        nombre = limpiar(nombre)
+        _validar_largo(nombre, "Tu nombre", *LARGO_NOMBRE)
+        if filtro.contiene(nombre):
+            registrar_filtrado("Nombre", nombre, filtro.encontradas(nombre), persona_id)
+            raise ErrorValidacion(
+                "Ese nombre tiene palabras inapropiadas. Usa tu nombre real o un apodo amable."
+            )
+    malas = filtro.encontradas(texto)
+    if malas:
+        registrar_filtrado("Comentario", texto, malas, persona_id)
+        lista = ", ".join(f"«{m}»" for m in malas)
+        raise ErrorValidacion(
+            f"Tu comentario tiene palabras inapropiadas ({lista}). Cámbialas para poder enviarlo."
+        )
+
+    ts = _a_ts(ahora)
+    with _conexion() as con:
+        reciente = con.ejecutar(
+            "SELECT COUNT(*) AS n FROM comentarios WHERE persona_id = ? AND momento > ?",
+            (persona_id, ts - SEGUNDOS_ENTRE_COMENTARIOS),
+        ).fetchone()
+        if int(reciente["n"]) > 0:
+            raise ErrorValidacion("Espera unos segundos antes de comentar de nuevo.")
+        nuevo_id = con.insertar(
+            "INSERT INTO comentarios (aviso_id, persona_id, nombre, texto, momento) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (aviso_id, persona_id, nombre, texto, ts),
+        )
+    _invalidar_cache()
+    return Comentario(int(nuevo_id), aviso_id, persona_id, nombre, texto, ahora)
+
+
+def borrar_comentario(comentario_id: int, persona_id: str | None, como_admin: bool = False) -> None:
+    """Cada persona puede borrar sus comentarios; la administración, cualquiera."""
+    with _conexion() as con:
+        fila = con.ejecutar(
+            "SELECT persona_id FROM comentarios WHERE id = ? AND borrado = 0", (comentario_id,)
+        ).fetchone()
+        if fila is None:
+            raise ErrorValidacion("Ese comentario ya no existe.")
+        es_suyo = bool(persona_id) and fila["persona_id"] == persona_id
+        if not es_suyo and not (como_admin and es_admin(persona_id)):
+            raise ErrorValidacion("Solo puedes borrar tus propios comentarios.")
+        con.ejecutar("UPDATE comentarios SET borrado = 1 WHERE id = ?", (comentario_id,))
+    _invalidar_cache()
+
+
+# --------------------------------------------------------------------------- #
+# Denuncias
+# --------------------------------------------------------------------------- #
+
+UMBRAL_DENUNCIAS = 3  # con tantas denuncias sin revisar, el aviso sale del tablero
+LARGO_MAX_DENUNCIA = 300
+MOTIVOS_DENUNCIA: dict[str, str] = {
+    "ofensivo": "Contenido ofensivo o inapropiado",
+    "spam": "Spam o publicidad",
+    "falso": "Parece falso o engañoso",
+    "peligroso": "Puede ser peligroso",
+    "otro": "Otro motivo",
+}
+
+
+@dataclass(frozen=True)
+class Denuncia:
+    id: int
+    aviso_id: int
+    motivo: str
+    comentario: str
+    momento: datetime
+
+    @property
+    def nombre_motivo(self) -> str:
+        return MOTIVOS_DENUNCIA.get(self.motivo, "Otro motivo")
+
+
+def denunciar(
+    aviso_id: int,
+    persona_id: str | None,
+    motivo: str | None,
+    comentario: str = "",
+    ahora: datetime | None = None,
+) -> None:
+    """Denuncia un aviso ajeno (una vez por navegador)."""
+    ahora = _ahora(ahora)
+    if not persona_id:
+        raise ErrorValidacion("No pudimos reconocer tu navegador. Recarga la página.")
+    if motivo not in MOTIVOS_DENUNCIA:
+        raise ErrorValidacion("Elige un motivo.")
+    comentario = limpiar(comentario)
+    if len(comentario) > LARGO_MAX_DENUNCIA:
+        raise ErrorValidacion(f"El comentario puede tener hasta {LARGO_MAX_DENUNCIA} caracteres.")
+
+    aviso = obtener_aviso(aviso_id)
+    if aviso is None:
+        raise ErrorValidacion("Este aviso no existe.")
+    if aviso.cancelado:
+        raise ErrorValidacion("Este aviso ya fue eliminado.")
+    if aviso.es_de(persona_id):
+        raise ErrorValidacion("No puedes denunciar tu propio aviso.")
+
+    with _conexion() as con:
+        ya = con.ejecutar(
+            "SELECT COUNT(*) AS n FROM denuncias WHERE aviso_id = ? AND persona_id = ?",
+            (aviso_id, persona_id),
+        ).fetchone()
+        if int(ya["n"]) > 0:
+            raise ErrorValidacion("Ya denunciaste este aviso. Gracias, la administración lo revisará.")
+        con.ejecutar(
+            "INSERT INTO denuncias (aviso_id, persona_id, motivo, comentario, momento) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (aviso_id, persona_id, motivo, comentario, _a_ts(ahora)),
+        )
+    _invalidar_cache()
+
+
+def denuncias_pendientes() -> list[tuple[Aviso, list[Denuncia]]]:
+    """Avisos con denuncias sin revisar, del más denunciado al menos."""
+    with _conexion() as con:
+        filas = con.ejecutar(
+            "SELECT * FROM denuncias WHERE revisada = 0 ORDER BY momento DESC, id DESC"
+        ).fetchall()
+        por_aviso: dict[int, list[Denuncia]] = {}
+        for f in filas:
+            por_aviso.setdefault(int(f["aviso_id"]), []).append(
+                Denuncia(
+                    id=int(f["id"]),
+                    aviso_id=int(f["aviso_id"]),
+                    motivo=f["motivo"],
+                    comentario=f["comentario"],
+                    momento=_de_ts(f["momento"]),
+                )
+            )
+        if not por_aviso:
+            return []
+        marcas = ",".join("?" * len(por_aviso))
+        avisos = _leer_avisos(con, f"SELECT * FROM avisos WHERE id IN ({marcas})", list(por_aviso))
+    pares = [(a, por_aviso[a.id]) for a in avisos]
+    pares.sort(key=lambda par: (-len(par[1]), -par[0].id))
+    return pares
+
+
+def descartar_denuncias(aviso_id: int) -> None:
+    """Marca como revisadas las denuncias de un aviso (vuelve al tablero si estaba oculto)."""
+    with _conexion() as con:
+        con.ejecutar(
+            "UPDATE denuncias SET revisada = 1 WHERE aviso_id = ? AND revisada = 0", (aviso_id,)
+        )
+    _invalidar_cache()

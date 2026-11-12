@@ -116,8 +116,12 @@ clave, usa **Cerrar la sesión de administración en todos los navegadores**.
 
 Qué hay en el panel:
 
-- **Resumen:** avisos abiertos, publicados, personas unidas, bloqueos y
-  avisos eliminados de la última semana.
+- **Resumen:** avisos abiertos, publicados, personas unidas, bloqueos,
+  avisos eliminados y denuncias por revisar.
+- **Denuncias:** los avisos que la gente denunció, con los motivos y
+  comentarios. Puedes **eliminar el aviso** o **descartar las denuncias**.
+  Con 3 denuncias de personas distintas, el aviso se oculta del tablero
+  hasta que lo revises.
 - **Palabras:** agrega palabras o frases al filtro **al instante**, sin
   volver a publicar el código. Cada una se filtra *siempre* o *solo en
   contexto inadecuado*: cuando aparece cerca (hasta 3 palabras) de alguna de
@@ -166,6 +170,12 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
    quitarlo.
 8. Cada aviso tiene su propia página (`/aviso/<número>`) para compartir el
    enlace por WhatsApp. Al publicar se muestra ese enlace.
+   - **📍 Cómo llegar:** abre el lugar en Google Maps (en el celular, en la app).
+   - **💬 Comentarios:** preguntas cortas como "¿se paga la cancha?" (hasta
+     200 caracteres, con el filtro de palabras). Cada uno puede borrar los
+     suyos; la administración, cualquiera.
+   - **🚩 Denunciar:** quien vea un aviso inapropiado lo puede denunciar una
+     vez, eligiendo un motivo. Le llega a la administración.
 9. **Filtro de palabras inapropiadas** (`filtro.py`): si el título, el lugar,
    los detalles o el nombre tienen groserías, insultos u ofensas, el campo se
    marca en rojo mientras se escribe y al publicar se dice exactamente qué

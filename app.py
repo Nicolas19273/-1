@@ -29,6 +29,7 @@ import tempfile
 import time
 import urllib.request
 import uuid
+from urllib.parse import quote_plus
 from collections import Counter
 from datetime import datetime, timedelta
 from functools import partial
@@ -210,7 +211,35 @@ def texto_quienes(aviso: datos.Aviso) -> str:
 def firma(avisos: list[datos.Aviso], momento: datetime) -> tuple:
     """Resumen de lo que se ve; si cambia, hay que redibujar."""
     minuto = int(momento.timestamp() // 60)  # para que avance la cuenta regresiva
-    return minuto, tuple((a.id, a.ocupados, a.motivo_cierre(momento)) for a in avisos)
+    return minuto, tuple((a.id, a.ocupados, a.motivo_cierre(momento), a.comentarios) for a in avisos)
+
+
+def url_mapa(lugar: str) -> str:
+    """Enlace de Google Maps para buscar el lugar (en el celular abre la app)."""
+    return "https://www.google.com/maps/search/?api=1&query=" + quote_plus(lugar)
+
+
+def texto_hace(momento: datetime, referencia: datetime) -> str:
+    segundos = int((referencia - momento).total_seconds())
+    if segundos < 60:
+        return "recién"
+    if segundos < 3600:
+        return f"hace {segundos // 60} min"
+    if segundos < 86400:
+        return f"hace {segundos // 3600} h"
+    return texto_fecha_evento(momento, referencia)
+
+
+def texto_comentarios(n: int) -> str:
+    if n == 0:
+        return "💬 Comentar"
+    return f"💬 {n} comentario{'s' if n != 1 else ''}"
+
+
+ESTILO_ACCION = (
+    "text-sm font-semibold text-primary no-underline rounded-full bg-green-50 "
+    "px-3 py-1 hover:bg-green-100 whitespace-nowrap"
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -364,6 +393,7 @@ def tarjeta_aviso(
     al_unirse: Callable[[int], None],
     al_salirse: Callable[[int], None],
     al_eliminar: Callable[[int], None],
+    al_denunciar: Callable[[int], None],
     modo: str = "tablero",  # "tablero" | "detalle" | "buzon"
 ) -> None:
     abierto = aviso.esta_abierto(momento)
@@ -414,6 +444,20 @@ def tarjeta_aviso(
             ui.label(texto_quienes(aviso)).classes("text-sm text-stone-500")
         else:
             lista_quienes(aviso, persona_id)
+
+        # Cómo llegar · comentarios · denunciar
+        if not aviso.cancelado:
+            with ui.row().classes("w-full items-center gap-2"):
+                ui.link("📍 Cómo llegar", url_mapa(aviso.lugar), new_tab=True).classes(ESTILO_ACCION)
+                if modo != "detalle":
+                    ui.link(texto_comentarios(aviso.comentarios), f"/aviso/{aviso.id}").classes(
+                        ESTILO_ACCION
+                    )
+                if not mio:
+                    ui.element("div").classes("grow")
+                    ui.button(icon="outlined_flag", on_click=partial(al_denunciar, aviso.id)).props(
+                        "flat round dense size=sm color=grey-6"
+                    ).tooltip("Denunciar este aviso")
 
         # Pie de la tarjeta
         if modo == "buzon":
@@ -489,6 +533,9 @@ def abrir_dialogo_unirse(
                     "groups",
                     f"{actualizado.ocupados} de {actualizado.personas_necesarias} · "
                     f"{texto_faltan(actualizado.cupos_libres)}",
+                )
+                ui.link("📍 Cómo llegar", url_mapa(actualizado.lugar), new_tab=True).classes(
+                    ESTILO_ACCION + " self-start mt-1"
                 )
             ui.label("Lo guardamos en tu buzón 📬 para que no se te olvide dónde y cuándo es.").classes(
                 "text-sm text-stone-600 text-center w-full"
@@ -661,6 +708,54 @@ def abrir_dialogo_eliminar(
             ui.button("Sí, eliminar", on_click=confirmar).props(
                 "unelevated rounded no-caps color=red-8"
             ).classes("flex-1")
+
+    dialogo.on("hide", dialogo.delete)
+    dialogo.open()
+
+
+def abrir_dialogo_denunciar(
+    aviso_id: int, capa: ui.element, persona_id: str | None, al_cambiar: Callable[[], None]
+) -> None:
+    aviso = datos.obtener_aviso(aviso_id)
+    if aviso is None or aviso.cancelado:
+        ui.notify("Este aviso ya no está disponible.", type="info", position="top")
+        al_cambiar()
+        return
+    if aviso.es_de(persona_id):
+        ui.notify("No puedes denunciar tu propio aviso.", type="info", position="top")
+        return
+
+    def enviar() -> None:
+        try:
+            datos.denunciar(aviso_id, persona_id, motivo.value, comentario.value)
+        except datos.ErrorValidacion as error:
+            ui.notify(str(error), type="negative", position="top")
+            if "ya denunciaste" in str(error).lower():
+                dialogo.close()
+            return
+        dialogo.close()
+        ui.notify("Gracias. La administración revisará este aviso.", type="positive", position="top")
+        al_cambiar()
+
+    with capa, ui.dialog() as dialogo, ui.card().classes("rounded-2xl p-6 gap-4").style(
+        "width: 440px; max-width: 94vw"
+    ):
+        ui.icon("outlined_flag", size="40px").classes("text-red-700 self-center")
+        ui.label("Denunciar aviso").classes("text-xl font-black text-stone-900 text-center w-full")
+        ui.label(aviso.titulo).classes("font-bold text-stone-700 text-center w-full -mt-3")
+        ui.label("¿Qué pasa con este aviso?").classes("text-sm font-semibold text-stone-700")
+        motivo = ui.radio(datos.MOTIVOS_DENUNCIA, value=None).classes("w-full -mt-2")
+        comentario = ui.textarea("Cuéntanos más (opcional)").props(
+            f"outlined autogrow maxlength={datos.LARGO_MAX_DENUNCIA}"
+        ).classes("w-full")
+        ui.label("Quien publicó el aviso no sabrá quién lo denunció.").classes("text-xs text-stone-500")
+        with ui.row().classes("w-full gap-2 no-wrap"):
+            ui.button("Cancelar", on_click=dialogo.close).props("flat rounded no-caps color=grey-8").classes(
+                "flex-1"
+            )
+            ui.button("Enviar denuncia", on_click=enviar).props("unelevated rounded no-caps color=red-8").classes(
+                "flex-1"
+            )
 
     dialogo.on("hide", dialogo.delete)
     dialogo.open()
@@ -840,6 +935,7 @@ def pagina_inicio(request: Request) -> None:
     al_unirse = partial(abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
     al_salirse = partial(abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
     al_eliminar = partial(abrir_dialogo_eliminar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+    al_denunciar = partial(abrir_dialogo_denunciar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
 
     @ui.refreshable
     def lista() -> None:
@@ -877,7 +973,7 @@ def pagina_inicio(request: Request) -> None:
             return
 
         for aviso in visibles:
-            tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar)
+            tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, al_denunciar)
 
     def revisar_cambios() -> None:
         momento = ahora()
@@ -901,16 +997,19 @@ def pagina_inicio(request: Request) -> None:
 def pagina_aviso(aviso_id: int, request: Request) -> None:
     preparar_pagina()
     persona_id = persona_de(request)
+    soy_admin = datos.es_admin(persona_id)
     capa = ui.element("div")
-    estado: dict = {"firma": None}
+    estado: dict = {"firma": None, "comentarios": None}
 
     def refrescar() -> None:
         contenido.refresh()
+        lista_comentarios.refresh()
         actualizar_contador()
 
     al_unirse = partial(abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
     al_salirse = partial(abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
     al_eliminar = partial(abrir_dialogo_eliminar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+    al_denunciar = partial(abrir_dialogo_denunciar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
 
     def leer() -> tuple[datos.Aviso | None, tuple | None]:
         momento = ahora()
@@ -931,11 +1030,56 @@ def pagina_aviso(aviso_id: int, request: Request) -> None:
         motivo = aviso.motivo_cierre(momento)
         if motivo:
             aviso_de_cierre(aviso, motivo)
-        tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, modo="detalle")
+        tarjeta_aviso(
+            aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, al_denunciar, modo="detalle"
+        )
+
+    # ------------------------------------------------------------ comentarios
+    def borrar_comentario(comentario_id: int) -> None:
+        try:
+            datos.borrar_comentario(comentario_id, persona_id, como_admin=soy_admin)
+        except datos.ErrorValidacion as error:
+            ui.notify(str(error), type="negative", position="top")
+        lista_comentarios.refresh()
+
+    @ui.refreshable
+    def lista_comentarios() -> None:
+        aviso = datos.obtener_aviso(aviso_id)
+        if aviso is None:
+            return
+        estado["comentarios"] = aviso.comentarios
+        momento = ahora()
+        comentarios = datos.comentarios_de(aviso_id)
+        ui.label(f"Comentarios ({len(comentarios)})").classes("text-lg font-black text-stone-900 mt-2")
+        if not comentarios:
+            ui.label("Todavía no hay comentarios. ¿Tienes una pregunta? Escríbela aquí abajo.").classes(
+                "text-sm text-stone-500"
+            )
+        for c in comentarios:
+            del_dueno = aviso.es_de(c.persona_id)
+            mio = bool(persona_id) and c.persona_id == persona_id
+            nombre = "Quien organiza" if del_dueno else (c.nombre or "Anónimo")
+            with ui.row().classes("w-full items-start gap-3 no-wrap"):
+                color = "bg-primary text-white" if del_dueno else "bg-stone-200 text-stone-700"
+                ui.label((nombre or "?")[:1].upper()).classes(
+                    f"w-8 h-8 rounded-full {color} text-sm font-bold flex items-center justify-center shrink-0"
+                )
+                with ui.column().classes("gap-0 grow"):
+                    with ui.row().classes("items-baseline gap-2 no-wrap"):
+                        ui.label(nombre + (" (tú)" if mio else "")).classes("font-semibold text-stone-900 text-sm")
+                        ui.label(texto_hace(c.momento, momento)).classes("text-xs text-stone-400")
+                    ui.label(c.texto).classes("text-stone-700 break-words")
+                if mio or soy_admin:
+                    ui.button(icon="close", on_click=partial(borrar_comentario, c.id)).props(
+                        "flat round dense size=sm color=grey-6"
+                    ).tooltip("Borrar comentario")
 
     def revisar_cambios() -> None:
-        if leer()[1] != estado["firma"]:
+        aviso, nueva_firma = leer()
+        if nueva_firma != estado["firma"]:
             contenido.refresh()
+        if aviso is not None and aviso.comentarios != estado["comentarios"]:
+            lista_comentarios.refresh()
         actualizar_contador()
 
     with ui.column().classes("w-full max-w-2xl mx-auto px-4 pt-6 pb-16 gap-4"):
@@ -945,7 +1089,46 @@ def pagina_aviso(aviso_id: int, request: Request) -> None:
         ).classes("self-start")
         contenido()
 
+        aviso_inicial = datos.obtener_aviso(aviso_id)
+        if aviso_inicial is not None:
+            with ui.card().classes("w-full rounded-2xl shadow-none border border-stone-200 p-5 gap-3"):
+                lista_comentarios()
+                if not aviso_inicial.cancelado:
+                    _formulario_comentario(aviso_inicial, persona_id, lista_comentarios.refresh)
+
     ui.timer(SEGUNDOS_ENTRE_REVISIONES, revisar_cambios)
+
+
+def _formulario_comentario(
+    aviso: datos.Aviso, persona_id: str | None, al_comentar: Callable[[], None]
+) -> None:
+    """Formulario fuera de la lista que se redibuja, para no perder lo que se está escribiendo."""
+    ui.separator().classes("my-1")
+    if aviso.es_de(persona_id):
+        campo_nombre = None
+        ui.label("Comentas como quien organiza.").classes("text-xs text-stone-500")
+    else:
+        campo_nombre = ui.input(
+            "Tu nombre", value=datos.nombre_usado(persona_id), validation=NOMBRE_SIN_GROSERIAS
+        ).props(f"outlined dense maxlength={datos.LARGO_NOMBRE[1]}").classes("w-full")
+    with ui.row().classes("w-full items-start gap-2 no-wrap"):
+        campo_texto = ui.input(
+            "Escribe un comentario…", placeholder="Ej: ¿Se paga la cancha?", validation=SIN_GROSERIAS
+        ).props(f"outlined dense maxlength={datos.LARGO_MAX_COMENTARIO} counter").classes("grow")
+
+        def enviar() -> None:
+            try:
+                datos.comentar(
+                    aviso.id, persona_id, campo_nombre.value if campo_nombre else "", campo_texto.value
+                )
+            except datos.ErrorValidacion as error:
+                ui.notify(str(error), type="negative", position="top")
+                return
+            campo_texto.value = ""
+            al_comentar()
+
+        campo_texto.on("keydown.enter", enviar)
+        ui.button(icon="send", on_click=enviar).props("unelevated round color=primary").tooltip("Enviar")
 
 
 @ui.page("/buzon", title="Falta Uno · Mi buzón")
@@ -962,6 +1145,7 @@ def pagina_buzon(request: Request) -> None:
     al_unirse = partial(abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
     al_salirse = partial(abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
     al_eliminar = partial(abrir_dialogo_eliminar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+    al_denunciar = partial(abrir_dialogo_denunciar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
 
     def leer() -> tuple[list[datos.Aviso], list[datos.Aviso], tuple]:
         momento = ahora()
@@ -998,7 +1182,7 @@ def pagina_buzon(request: Request) -> None:
                 "event_available",
             )
             for aviso in me_uni:
-                tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, modo="buzon")
+                tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, al_denunciar, modo="buzon")
 
         if organizo:
             seccion(
@@ -1007,7 +1191,7 @@ def pagina_buzon(request: Request) -> None:
                 "campaign",
             )
             for aviso in organizo:
-                tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, modo="buzon")
+                tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, al_denunciar, modo="buzon")
 
     def revisar_cambios() -> None:
         if leer()[2] != estado["firma"]:
@@ -1141,6 +1325,8 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
 
     with ui.tabs().classes("w-full") as pestanas:
         p_resumen = ui.tab("Resumen", icon="insights")
+        n_denuncias = len(datos.denuncias_pendientes())
+        p_denuncias = ui.tab(f"Denuncias ({n_denuncias})" if n_denuncias else "Denuncias", icon="outlined_flag")
         p_palabras = ui.tab("Palabras", icon="spellcheck")
         p_bloqueados = ui.tab("Bloqueados", icon="block")
         p_avisos = ui.tab("Avisos", icon="campaign")
@@ -1159,6 +1345,7 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
                     ("Bloqueos del filtro (7 días)", c["bloqueos_7d"], "block"),
                     ("Avisos eliminados (7 días)", c["cancelados_7d"], "delete_outline"),
                     ("Reglas propias del filtro", c["reglas"], "spellcheck"),
+                    ("Avisos con denuncias por revisar", c["denuncias_pendientes"], "outlined_flag"),
                 ]
                 with ui.row().classes("w-full gap-3"):
                     for titulo, valor, icono in tarjetas:
@@ -1198,6 +1385,69 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
             ui.label(
                 "Úsalo si entraste desde un computador ajeno o si cambiaste la clave."
             ).classes("text-xs text-stone-400 self-end -mt-3")
+
+        # ------------------------------------------------------------ Denuncias
+        with ui.tab_panel(p_denuncias).classes("px-0 gap-4"):
+            ui.label(
+                f"Con {datos.UMBRAL_DENUNCIAS} denuncias de personas distintas, un aviso se oculta "
+                "del tablero hasta que lo revises."
+            ).classes("text-sm text-stone-500")
+
+            def tras_moderar() -> None:
+                lista_denuncias.refresh()
+                lista_avisos.refresh()
+                cifras.refresh()
+
+            def descartar(aviso_id: int) -> None:
+                if not sigo_siendo_admin():
+                    return
+                datos.descartar_denuncias(aviso_id)
+                ui.notify("Denuncias descartadas. El aviso se ve normal otra vez.", type="info", position="top")
+                tras_moderar()
+
+            @ui.refreshable
+            def lista_denuncias() -> None:
+                momento = ahora()
+                pendientes = datos.denuncias_pendientes()
+                if not pendientes:
+                    ui.label("No hay denuncias por revisar. 🎉").classes("text-stone-500")
+                for aviso, denuncias in pendientes:
+                    with tarjeta_simple():
+                        with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
+                            ui.label(aviso.titulo).classes(
+                                "text-lg font-bold text-stone-900 leading-snug cursor-pointer hover:underline"
+                            ).on("click", partial(ui.navigate.to, f"/aviso/{aviso.id}"))
+                            n = len(denuncias)
+                            etiqueta(f"{n} denuncia{'s' if n != 1 else ''}", "outlined_flag", rojo=True)
+                        if n >= datos.UMBRAL_DENUNCIAS and not aviso.cancelado:
+                            ui.label("Oculto del tablero mientras lo revisas.").classes(
+                                "text-sm font-semibold text-red-800"
+                            )
+                        ui.label(
+                            f"{aviso.lugar} · {texto_fecha_evento(aviso.inicio_evento, momento)}"
+                        ).classes("text-sm text-stone-600")
+                        if aviso.descripcion:
+                            ui.label(aviso.descripcion).classes("text-sm text-stone-500 line-clamp-3")
+                        for motivo_txt, cantidad in Counter(d.nombre_motivo for d in denuncias).most_common():
+                            ui.label(f"• {motivo_txt} ({cantidad})").classes("text-sm text-stone-800")
+                        for d in denuncias:
+                            if d.comentario:
+                                ui.label(f"“{d.comentario}”").classes("text-sm italic text-stone-600")
+                        with ui.row().classes("gap-2"):
+                            if not aviso.cancelado:
+                                ui.button(
+                                    "Eliminar aviso",
+                                    icon="delete_outline",
+                                    on_click=partial(
+                                        abrir_dialogo_eliminar, aviso.id, capa, persona_id, tras_moderar,
+                                        como_admin=True,
+                                    ),
+                                ).props("unelevated rounded no-caps color=red-8")
+                            ui.button(
+                                "Descartar denuncias", icon="done", on_click=partial(descartar, aviso.id)
+                            ).props("flat rounded no-caps color=grey-9")
+
+            lista_denuncias()
 
         # ------------------------------------------------------------ Palabras
         with ui.tab_panel(p_palabras).classes("px-0 gap-4"):
@@ -1371,6 +1621,7 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
 
             def tras_eliminar() -> None:
                 lista_avisos.refresh()
+                lista_denuncias.refresh()
                 cifras.refresh()
 
             @ui.refreshable
