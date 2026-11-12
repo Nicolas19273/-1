@@ -125,14 +125,21 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
    página del aviso o en su buzón) hasta que empieza el evento. Su cupo queda
    libre y, si el aviso sigue dentro de su plazo, **vuelve a aparecer en el
    tablero** para que otra persona lo tome.
-7. Cada aviso tiene su propia página (`/aviso/<número>`) para compartir el
+7. Quien publicó un aviso puede **eliminarlo** (botón «Eliminar aviso» en el
+   tablero, en su buzón, en la página del aviso y justo después de publicarlo).
+   Sale del tablero y de su buzón. A quienes ya se habían unido les queda en
+   el buzón marcado como **Cancelado**, para que se enteren, con un botón para
+   quitarlo.
+8. Cada aviso tiene su propia página (`/aviso/<número>`) para compartir el
    enlace por WhatsApp. Al publicar se muestra ese enlace.
-8. **Filtro de palabras inapropiadas** (`filtro.py`): en el título, el lugar y
-   los detalles, las groserías, insultos y ofensas se tapan con `****`. En los
-   nombres de quienes se unen no se permiten. Detecta trucos como `w3on`,
-   `p.u.t.a`, `weooon` o `ctm`, y cuida no tachar palabras normales como
-   "película", "Vergara" o "Putaendo". Ningún filtro es perfecto: para agregar
-   o quitar palabras, edita las listas al comienzo de `filtro.py`.
+9. **Filtro de palabras inapropiadas** (`filtro.py`): si el título, el lugar,
+   los detalles o el nombre tienen groserías, insultos u ofensas, el campo se
+   marca en rojo mientras se escribe y al publicar se dice exactamente qué
+   palabra cambiar; no se publica hasta corregirla. Detecta trucos como
+   `w3on`, `p.u.t.a`, `weooon` o `ctm`, y cuida no tachar palabras normales
+   como "película", "Vergara" o "Putaendo". Si algo antiguo quedó guardado con
+   una de esas palabras, se muestra sin ella. Ningún filtro es perfecto: para
+   agregar o quitar palabras, edita las listas al comienzo de `filtro.py`.
 
 **¿Cómo sabe la página quién es quién, sin cuentas?** A cada navegador le da
 un identificador al azar guardado en una cookie que dura un año. Por eso el

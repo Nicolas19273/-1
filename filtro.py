@@ -1,11 +1,12 @@
 """
-filtro.py — Detecta y tapa palabras inapropiadas (groserías, insultos,
-términos sexuales vulgares y ofensas discriminatorias) en español —con
-chilenismos— y en inglés. Solo Python, sin librerías externas.
+filtro.py — Detecta palabras inapropiadas (groserías, insultos, términos
+sexuales vulgares y ofensas discriminatorias) en español —con chilenismos—
+y en inglés. Solo Python, sin librerías externas.
 
 Qué hace:
-  * censurar(texto)  -> el mismo texto con las palabras malas cambiadas por ****
-  * contiene(texto)  -> True si encontró alguna
+  * contiene(texto)    -> True si encontró alguna
+  * encontradas(texto) -> cuáles, tal como se escribieron (para avisarle a la persona)
+  * quitar(texto)      -> el texto sin esas palabras (para lo que ya estaba guardado)
 
 Trucos que detecta:
   * Mayúsculas y tildes:            WEÓN, Weón, weon
@@ -65,7 +66,7 @@ mamon mamona mamones mamada mamadas mamahuevo mamaguevo follar follando follada
 teta tetas tetona tetonas pajero pajera pajeros pajeras pajearse
 chupala chupalo chupamela chupamelo chupapico chupapija
 flaite flaites sudaca sudacas veneco venecos nazi nazis hitler
-porno porn xxx nudes
+porno porn nudes
 fuck fucks fucking fuckin fucker fuckers fucked fck fk fuk fukin motherfucker motherfuckers
 wtf stfu shit shits shitty bullshit bitch bitches bitchy asshole assholes ass dumbass jackass
 cunt cunts pussy pussies dickhead cocksucker bastard bastards slut sluts whore whores
@@ -91,8 +92,6 @@ FRASES = [
     "chupa la",
     "me cago en",
 ]
-
-TAPA = "*"  # con qué se tapan las letras
 
 # --------------------------------------------------------------------------- #
 # Normalización: lleva cada palabra a una forma simple para comparar
@@ -127,6 +126,9 @@ def _tiene_dobles(t: str) -> bool:
 
 
 _LISTA = {normalizar(p) for p in PALABRAS.split()}
+assert all(re.search(r"(.)\1\1", p) is None for p in PALABRAS.split()), (
+    "No pongas en la lista palabras con 3 letras iguales seguidas (se confundirían)"
+)
 # Para "weoon" -> "weon": solo con palabras que no tienen letras dobles propias
 # (así "pera" no se confunde con "perra").
 _LISTA_SIN_DOBLES = {p for p in _LISTA if not _tiene_dobles(p)}
@@ -202,14 +204,35 @@ def contiene(texto: str | None) -> bool:
     return bool(encontrar(texto))
 
 
-def censurar(texto: str | None) -> str:
-    """Tapa con **** las palabras inapropiadas, dejando el resto igual."""
+def encontradas(texto: str | None) -> list[str]:
+    """Las palabras inapropiadas tal como se escribieron, sin repetir."""
+    vistas: list[str] = []
+    for inicio, fin in encontrar(texto):
+        palabra = (texto or "")[inicio:fin]
+        if palabra.lower() not in (v.lower() for v in vistas):
+            vistas.append(palabra)
+    return vistas
+
+
+def _ordenar_linea(linea: str) -> str:
+    linea = re.sub(r"[ \t]{2,}", " ", linea)  # espacios dobles
+    linea = re.sub(r"[ \t]+([,.;:!?)])", r"\1", linea)  # espacio antes de puntuación
+    linea = re.sub(r"([,;:])(\s*[,;:.!?])+", r"\1", linea)  # puntuación repetida: ", ," -> ","
+    linea = re.sub(r"^[\s,;:.!?-]+", "", linea)  # puntuación suelta al comienzo
+    linea = re.sub(r"[\s,;:-]+$", "", linea)  # coma o guion colgando al final
+    return linea.strip()
+
+
+def quitar(texto: str | None) -> str:
+    """Borra las palabras inapropiadas y ordena los espacios y comas que sobran."""
     if not texto:
         return texto or ""
+    tramos = encontrar(texto)
+    if not tramos:
+        return texto
     partes, ultimo = [], 0
-    for inicio, fin in encontrar(texto):
+    for inicio, fin in tramos:
         partes.append(texto[ultimo:inicio])
-        partes.append(re.sub(r"\S", TAPA, texto[inicio:fin]))
         ultimo = fin
     partes.append(texto[ultimo:])
-    return "".join(partes)
+    return "\n".join(_ordenar_linea(l) for l in "".join(partes).split("\n")).strip()

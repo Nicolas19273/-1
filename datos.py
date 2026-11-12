@@ -26,6 +26,8 @@ Reglas:
     hasta que se cumple su plazo de 24/48 h.
   * En el buzón de quien se unió, el aviso sigue visible hasta unas horas
     después de que empieza el evento, para recordar dónde y cuándo es.
+  * Quien publicó un aviso puede eliminarlo. Sale del tablero y de su buzón;
+    a quienes se habían unido les queda en el buzón marcado como cancelado.
   * Quien se unió puede salirse antes de que empiece el evento. Su cupo queda
     libre y, si el aviso sigue dentro de plazo, vuelve a aparecer en el
     tablero (eso pasa solo: el tablero siempre muestra los avisos con cupo).
@@ -77,6 +79,7 @@ CATEGORIAS: dict[str, str] = {
 }
 
 # Motivos por los que un aviso puede estar cerrado
+CANCELADO = "cancelado"
 COMPLETO = "completo"
 VENCIDO = "vencido"
 INICIADO = "iniciado"
@@ -112,11 +115,16 @@ class Aviso:
     duracion_horas: int
     creado_en: datetime
     expira_en: datetime
+    cancelado_en: datetime | None  # cuándo lo eliminó quien lo publicó (None si sigue)
     inscritos: tuple[Participante, ...]  # quienes se unieron desde la página
 
     @property
     def participantes(self) -> tuple[str, ...]:
         return tuple(p.nombre for p in self.inscritos)
+
+    @property
+    def cancelado(self) -> bool:
+        return self.cancelado_en is not None
 
     @property
     def ocupados(self) -> int:
@@ -145,8 +153,10 @@ class Aviso:
         return CATEGORIAS.get(self.categoria, "Otro")
 
     def motivo_cierre(self, ahora: datetime | None = None) -> str | None:
-        """None si está abierto; si no, COMPLETO, INICIADO o VENCIDO."""
+        """None si está abierto; si no, CANCELADO, COMPLETO, INICIADO o VENCIDO."""
         ahora = _ahora(ahora)
+        if self.cancelado:
+            return CANCELADO
         if self.esta_lleno:
             return COMPLETO
         if ahora >= self.inicio_evento:
@@ -227,6 +237,7 @@ CREATE INDEX IF NOT EXISTS idx_avisos_cierre ON avisos(expira_en, inicio_evento)
 _COLUMNAS_NUEVAS = (
     ("avisos", "creador_id", "TEXT"),
     ("participantes", "persona_id", "TEXT"),
+    ("avisos", "cancelado_en", "BIGINT"),
 )
 _INDICES_NUEVOS = (
     "CREATE INDEX IF NOT EXISTS idx_avisos_creador ON avisos(creador_id)",
@@ -419,27 +430,35 @@ def armar_fecha_hora(fecha: str | None, hora: str | None) -> datetime:
     return momento.replace(tzinfo=ZONA_HORARIA)
 
 
-def _letras(texto: str) -> int:
-    return sum(c.isalpha() for c in texto)
+def _sin_groserias(texto: str, campo: str, plural: bool = False) -> None:
+    """Si hay palabras inapropiadas, avisa cuáles para que la persona las cambie."""
+    malas = filtro.encontradas(texto)
+    if malas:
+        lista = ", ".join(f"«{m}»" for m in malas)
+        verbo = "tienen" if plural else "tiene"
+        raise ErrorValidacion(
+            f"{campo} {verbo} palabras inapropiadas ({lista}). Cámbialas para poder publicar."
+        )
 
 
 def _fila_a_aviso(fila, inscritos: list[Participante]) -> Aviso:
-    # Se pasa el filtro también al leer: así quedan limpios los avisos
-    # guardados antes del filtro y los que tengan palabras agregadas después.
+    # Lo guardado antes del filtro (o con palabras que se agreguen a la lista
+    # después) se muestra sin esas palabras.
     return Aviso(
         id=int(fila["id"]),
-        titulo=filtro.censurar(fila["titulo"]),
+        titulo=filtro.quitar(fila["titulo"]) or "Aviso",
         categoria=fila["categoria"],
-        descripcion=filtro.censurar(fila["descripcion"]),
-        lugar=filtro.censurar(fila["lugar"]),
+        descripcion=filtro.quitar(fila["descripcion"]),
+        lugar=filtro.quitar(fila["lugar"]) or "Lugar por confirmar",
         inicio_evento=_de_ts(fila["inicio_evento"]),
         personas_actuales=int(fila["personas_actuales"]),
         personas_necesarias=int(fila["personas_necesarias"]),
-        creador=filtro.censurar(fila["creador"] or ""),
+        creador=filtro.quitar(fila["creador"] or ""),
         creador_id=fila["creador_id"],
         duracion_horas=int(fila["duracion_horas"]),
         creado_en=_de_ts(fila["creado_en"]),
         expira_en=_de_ts(fila["expira_en"]),
+        cancelado_en=_de_ts(fila["cancelado_en"]) if fila["cancelado_en"] is not None else None,
         inscritos=tuple(inscritos),
     )
 
@@ -455,7 +474,7 @@ def _inscritos_de(con: _Conexion, ids: list[int]) -> dict[int, list[Participante
         ids,
     ).fetchall()
     for fila in filas:
-        nombre = filtro.censurar(fila["nombre"])
+        nombre = filtro.quitar(fila["nombre"]) or "Anónimo"
         resultado[int(fila["aviso_id"])].append(Participante(nombre, fila["persona_id"]))
     return resultado
 
@@ -499,19 +518,13 @@ def crear_aviso(
     descripcion = (descripcion or "").strip()
 
     # Se valida en el mismo orden en que aparecen los campos del formulario.
-    # Las palabras inapropiadas se tapan con ****; si no queda nada real, error.
     _validar_largo(titulo, "Título", *LARGO_TITULO)
-    titulo = filtro.censurar(titulo)
-    if _letras(titulo) < 3:
-        raise ErrorValidacion("Título: escribe un título sin palabras inapropiadas.")
+    _sin_groserias(titulo, "El título")
     if categoria not in CATEGORIAS:
         raise ErrorValidacion("Elige una categoría.")
     _validar_largo(lugar, "Lugar", *LARGO_LUGAR)
-    lugar = filtro.censurar(lugar)
-    if _letras(lugar) < 2:
-        raise ErrorValidacion("Lugar: escribe un lugar sin palabras inapropiadas.")
-    descripcion = filtro.censurar(descripcion)
-    creador = filtro.censurar(creador)
+    _sin_groserias(lugar, "El lugar")
+    creador = filtro.quitar(creador)
 
     if inicio_evento.tzinfo is None:
         inicio_evento = inicio_evento.replace(tzinfo=ZONA_HORARIA)
@@ -534,6 +547,7 @@ def crear_aviso(
 
     if len(descripcion) > LARGO_MAX_DESCRIPCION:
         raise ErrorValidacion(f"Detalles: máximo {LARGO_MAX_DESCRIPCION} caracteres.")
+    _sin_groserias(descripcion, "Los detalles", plural=True)
 
     duracion = _a_entero(duracion_horas, "Duración del aviso")
     if duracion not in DURACIONES_PERMITIDAS:
@@ -607,7 +621,7 @@ def avisos_activos(ahora: datetime | None = None) -> list[Aviso]:
                 SELECT a.*
                 FROM avisos a
                 LEFT JOIN participantes p ON p.aviso_id = a.id
-                WHERE a.expira_en > ? AND a.inicio_evento > ?
+                WHERE a.expira_en > ? AND a.inicio_evento > ? AND a.cancelado_en IS NULL
                 GROUP BY a.id
                 HAVING a.personas_actuales + COUNT(p.id) < a.personas_necesarias
                 ORDER BY a.inicio_evento ASC, a.id ASC
@@ -656,7 +670,7 @@ def mi_buzon(persona_id: str | None, ahora: datetime | None = None) -> tuple[lis
                 con,
                 """
                 SELECT * FROM avisos
-                WHERE creador_id = ? AND expira_en > ?
+                WHERE creador_id = ? AND expira_en > ? AND cancelado_en IS NULL
                 ORDER BY inicio_evento ASC, id ASC
                 """,
                 (persona_id, ts),
@@ -718,6 +732,8 @@ def unirse(
             raise ErrorValidacion("Ya estás anotado en este aviso. Míralo en tu buzón.")
 
         motivo = aviso.motivo_cierre(ahora)
+        if motivo == CANCELADO:
+            raise ErrorValidacion("Este aviso fue cancelado por quien lo publicó.")
         if motivo == COMPLETO:
             raise ErrorValidacion("Llegaste tarde: el grupo ya se completó.")
         if motivo == INICIADO:
@@ -760,11 +776,37 @@ def salirse(aviso_id: int, persona_id: str | None, ahora: datetime | None = None
         aviso = _fila_a_aviso(fila, _inscritos_de(con, [aviso_id])[aviso_id])
         if not aviso.tiene_inscrito(persona_id):
             raise ErrorValidacion("No estás anotado en este aviso.")
-        if ahora >= aviso.inicio_evento:
+        if ahora >= aviso.inicio_evento and not aviso.cancelado:
             raise ErrorValidacion("El evento ya empezó: ya no puedes salirte desde aquí.")
         con.ejecutar(
             "DELETE FROM participantes WHERE aviso_id = ? AND persona_id = ?",
             (aviso_id, persona_id),
+        )
+    _invalidar_cache()
+
+    actualizado = obtener_aviso(aviso_id)
+    assert actualizado is not None
+    return actualizado
+
+
+def eliminar_aviso(aviso_id: int, persona_id: str | None, ahora: datetime | None = None) -> Aviso:
+    """
+    Quien publicó el aviso lo elimina. Desaparece del tablero y de su buzón.
+    Quienes ya se habían unido lo siguen viendo en su buzón, marcado como
+    cancelado, para que se enteren (y pueden quitarlo de ahí).
+    """
+    ahora = _ahora(ahora)
+    with _conexion() as con, con.transaccion():
+        fila = con.bloquear_aviso(aviso_id)
+        if fila is None:
+            raise ErrorValidacion("Este aviso no existe.")
+        aviso = _fila_a_aviso(fila, [])
+        if not aviso.es_de(persona_id):
+            raise ErrorValidacion("Solo quien publicó el aviso puede eliminarlo.")
+        if aviso.cancelado:
+            raise ErrorValidacion("Este aviso ya estaba eliminado.")
+        con.ejecutar(
+            "UPDATE avisos SET cancelado_en = ? WHERE id = ?", (_a_ts(ahora), aviso_id)
         )
     _invalidar_cache()
 

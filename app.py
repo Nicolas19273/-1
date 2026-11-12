@@ -69,8 +69,9 @@ DIAS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
 
 CIERRES = {
+    datos.CANCELADO: ("event_busy", "Aviso cancelado", "Quien lo publicó lo eliminó. Este evento ya no se realiza."),
     datos.COMPLETO: ("groups", "¡Grupo completo!", "Ya están todos. Este aviso no recibe más gente."),
-    datos.INICIADO: ("event_busy", "El evento ya comenzó", "El aviso se cerró a la hora del evento."),
+    datos.INICIADO: ("sports", "El evento ya comenzó", "El aviso se cerró a la hora del evento."),
     datos.VENCIDO: ("timer_off", "Aviso cerrado", "Se cumplió el plazo de {horas} horas."),
 }
 
@@ -98,6 +99,10 @@ RUTA_FAVICON.write_text(LOGO_SVG, encoding="utf-8")
 # --------------------------------------------------------------------------- #
 # Quién es quién: un identificador al azar por navegador (cookie)
 # --------------------------------------------------------------------------- #
+
+# Marca en rojo el campo mientras se escribe si tiene palabras inapropiadas.
+SIN_GROSERIAS = {"Tiene palabras inapropiadas: cámbialas para poder publicar.": lambda v: not filtro.contiene(v)}
+NOMBRE_SIN_GROSERIAS = {"Ese nombre no está permitido. Usa tu nombre real o un apodo amable.": lambda v: not filtro.contiene(v)}
 
 COOKIE_IDENTIDAD = "falta_uno_id"
 _FORMATO_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -256,9 +261,10 @@ def dato(icono: str, texto: str) -> None:
         ui.label(texto).classes("text-stone-700 whitespace-pre-line")
 
 
-def etiqueta(texto: str, icono: str) -> None:
+def etiqueta(texto: str, icono: str, rojo: bool = False) -> None:
+    colores = "bg-red-100 text-red-900" if rojo else "bg-green-100 text-green-900"
     with ui.row().classes(
-        "items-center gap-1 no-wrap rounded-full bg-green-100 text-green-900 px-2.5 py-0.5 shrink-0"
+        f"items-center gap-1 no-wrap rounded-full {colores} px-2.5 py-0.5 shrink-0"
     ):
         ui.icon(icono, size="14px")
         ui.label(texto).classes("text-xs font-bold whitespace-nowrap")
@@ -329,6 +335,9 @@ def estado_en_buzon(aviso: datos.Aviso, momento: datetime, persona_id: str | Non
         else:
             principal = "Ya no recibe más gente"
         secundario = f"Lo verás aquí hasta {texto_cuando(aviso.expira_en, momento)}."
+    elif aviso.cancelado:
+        principal = "Cancelado por quien lo publicó 🚫"
+        secundario = "Este evento ya no se realiza. Puedes quitarlo de tu buzón."
     else:
         if momento >= aviso.inicio_evento:
             principal = "El evento ya empezó"
@@ -348,12 +357,13 @@ def tarjeta_aviso(
     persona_id: str | None,
     al_unirse: Callable[[int], None],
     al_salirse: Callable[[int], None],
+    al_eliminar: Callable[[int], None],
     modo: str = "tablero",  # "tablero" | "detalle" | "buzon"
 ) -> None:
     abierto = aviso.esta_abierto(momento)
     mio = aviso.es_de(persona_id)
     anotado = aviso.tiene_inscrito(persona_id)
-    puede_salirse = anotado and momento < aviso.inicio_evento
+    puede_salirse = anotado and (aviso.cancelado or momento < aviso.inicio_evento)
 
     with ui.card().classes("w-full rounded-2xl shadow-none border border-stone-200 p-5 gap-3"):
         # Categoría y, a la derecha, tu rol o la cuenta regresiva
@@ -363,7 +373,9 @@ def tarjeta_aviso(
                 ui.label(aviso.nombre_categoria.upper()).classes(
                     "text-xs font-bold tracking-wider text-stone-500"
                 )
-            if mio:
+            if aviso.cancelado:
+                etiqueta("Cancelado", "block", rojo=True)
+            elif mio:
                 etiqueta("Tu aviso", "star")
             elif anotado:
                 etiqueta("Anotado", "check")
@@ -400,6 +412,8 @@ def tarjeta_aviso(
         # Pie de la tarjeta
         if modo == "buzon":
             estado_en_buzon(aviso, momento, persona_id)
+        elif aviso.cancelado:
+            pass  # el recuadro de "Aviso cancelado" ya lo explica
         elif mio:
             ui.label("Es tu aviso: lo ves en tu buzón aunque se llene.").classes(
                 "text-sm font-semibold text-primary"
@@ -409,10 +423,15 @@ def tarjeta_aviso(
                 "text-sm font-semibold text-primary"
             )
 
-        if puede_salirse:
+        if mio and not aviso.cancelado:
             ui.button(
-                "Salirme del evento", icon="logout", on_click=partial(al_salirse, aviso.id)
+                "Eliminar aviso", icon="delete_outline", on_click=partial(al_eliminar, aviso.id)
             ).props("flat rounded no-caps dense color=red-8").classes("self-start -ml-1")
+        elif puede_salirse:
+            texto = "Quitar de mi buzón" if aviso.cancelado else "Salirme del evento"
+            ui.button(texto, icon="logout", on_click=partial(al_salirse, aviso.id)).props(
+                "flat rounded no-caps dense color=red-8"
+            ).classes("self-start -ml-1")
         elif not mio and not anotado and abierto and modo != "buzon":
             ui.button("Unirme", icon="person_add", on_click=partial(al_unirse, aviso.id)).props(
                 "unelevated rounded no-caps"
@@ -503,7 +522,10 @@ def abrir_dialogo_unirse(
         ui.label(texto_faltan(aviso.cupos_libres)).classes("font-bold text-primary")
 
         nombre = ui.input(
-            "Tu nombre", placeholder="Ej: Pedro Soto", value=datos.nombre_usado(persona_id)
+            "Tu nombre",
+            placeholder="Ej: Pedro Soto",
+            value=datos.nombre_usado(persona_id),
+            validation=NOMBRE_SIN_GROSERIAS,
         ).props(f"outlined autofocus maxlength={datos.LARGO_NOMBRE[1]}").classes("w-full")
         nombre.on("keydown.enter", confirmar)
 
@@ -523,6 +545,14 @@ def abrir_dialogo_salirse(
     aviso = datos.obtener_aviso(aviso_id)
     if aviso is None or not aviso.tiene_inscrito(persona_id):
         ui.notify("Ya no estás anotado en este aviso.", type="info", position="top")
+        al_cambiar()
+        return
+    if aviso.cancelado:  # solo quitarlo del buzón: no hace falta preguntar
+        try:
+            datos.salirse(aviso_id, persona_id)
+            ui.notify("Lo quitamos de tu buzón.", type="info", position="top")
+        except datos.ErrorValidacion as error:
+            ui.notify(str(error), type="negative", position="top")
         al_cambiar()
         return
 
@@ -559,6 +589,65 @@ def abrir_dialogo_salirse(
                 "flat rounded no-caps color=grey-8"
             ).classes("flex-1")
             ui.button("Sí, salirme", on_click=confirmar).props(
+                "unelevated rounded no-caps color=red-8"
+            ).classes("flex-1")
+
+    dialogo.on("hide", dialogo.delete)
+    dialogo.open()
+
+
+def abrir_dialogo_eliminar(
+    aviso_id: int,
+    capa: ui.element,
+    persona_id: str | None,
+    al_cambiar: Callable[[], None],
+    al_terminar: Callable[[], None] | None = None,
+) -> None:
+    aviso = datos.obtener_aviso(aviso_id)
+    if aviso is None or not aviso.es_de(persona_id) or aviso.cancelado:
+        ui.notify("Este aviso ya no se puede eliminar.", type="info", position="top")
+        al_cambiar()
+        return
+
+    def confirmar() -> None:
+        try:
+            datos.eliminar_aviso(aviso_id, persona_id)
+        except datos.ErrorValidacion as error:
+            ui.notify(str(error), type="negative", position="top")
+            dialogo.close()
+            al_cambiar()
+            return
+        dialogo.close()
+        ui.notify(f"Eliminaste «{aviso.titulo}».", type="info", position="top")
+        al_cambiar()
+        if al_terminar:
+            al_terminar()
+
+    n = len(aviso.inscritos)
+    if n:
+        consecuencia = (
+            f"{'La persona que se unió verá' if n == 1 else f'Las {n} personas que se unieron verán'} "
+            "en su buzón que el evento se canceló."
+        )
+    else:
+        consecuencia = "Nadie se ha unido todavía."
+
+    with capa, ui.dialog() as dialogo, ui.card().classes("rounded-2xl p-6 gap-4").style(
+        "width: 420px; max-width: 94vw"
+    ):
+        ui.icon("delete_outline", size="40px").classes("text-red-700 self-center")
+        ui.label("¿Eliminar este aviso?").classes(
+            "text-xl font-black text-stone-900 text-center w-full"
+        )
+        ui.label(aviso.titulo).classes("font-bold text-stone-700 text-center w-full -mt-3")
+        ui.label(
+            f"Desaparecerá del tablero y de tu buzón. {consecuencia} No se puede deshacer."
+        ).classes("text-sm text-stone-600 text-center w-full")
+        with ui.row().classes("w-full gap-2 no-wrap"):
+            ui.button("No, mantenerlo", on_click=dialogo.close).props(
+                "flat rounded no-caps color=grey-8"
+            ).classes("flex-1")
+            ui.button("Sí, eliminar", on_click=confirmar).props(
                 "unelevated rounded no-caps color=red-8"
             ).classes("flex-1")
 
@@ -604,12 +693,6 @@ def abrir_dialogo_crear(
             return
         al_cambiar()
         mostrar_exito(aviso)
-        if any(filtro.contiene(c.value) for c in (campo_titulo, campo_lugar, campo_descripcion)):
-            ui.notify(
-                "Algunas palabras inapropiadas se taparon con ****.",
-                type="warning",
-                position="top",
-            )
 
     def mostrar_exito(aviso: datos.Aviso) -> None:
         enlace = f"{base_url}/aviso/{aviso.id}"
@@ -637,6 +720,13 @@ def abrir_dialogo_crear(
                 ui.button("Ver mi buzón", icon="inbox", on_click=lambda: ui.navigate.to("/buzon")).props(
                     "unelevated rounded no-caps"
                 ).classes("flex-1")
+            ui.button(
+                "¿Te equivocaste? Eliminar este aviso",
+                icon="delete_outline",
+                on_click=lambda: abrir_dialogo_eliminar(
+                    aviso.id, capa, persona_id, al_cambiar, al_terminar=dialogo.close
+                ),
+            ).props("flat rounded no-caps dense color=red-8").classes("self-center")
 
     with cuerpo:
         with ui.row().classes("w-full items-center justify-between no-wrap"):
@@ -644,14 +734,16 @@ def abrir_dialogo_crear(
             ui.button(icon="close", on_click=dialogo.close).props("flat round dense color=grey-7")
 
         campo_titulo = ui.input(
-            "Título", placeholder="Ej: Pichanga 7 vs 7, falta uno"
+            "Título", placeholder="Ej: Pichanga 7 vs 7, falta uno", validation=SIN_GROSERIAS
         ).props(f"outlined maxlength={datos.LARGO_TITULO[1]}").classes("w-full")
 
         campo_categoria = ui.select(datos.CATEGORIAS, label="Categoría", value="futbol").props(
             "outlined"
         ).classes("w-full")
 
-        campo_lugar = ui.input("Lugar", placeholder="Ej: Cancha 3, Parque O'Higgins").props(
+        campo_lugar = ui.input(
+            "Lugar", placeholder="Ej: Cancha 3, Parque O'Higgins", validation=SIN_GROSERIAS
+        ).props(
             f"outlined maxlength={datos.LARGO_LUGAR[1]}"
         ).classes("w-full")
 
@@ -687,6 +779,7 @@ def abrir_dialogo_crear(
         campo_descripcion = ui.textarea(
             "Detalles (opcional)",
             placeholder="Ej: Se paga la cancha entre todos. Traer polera oscura.",
+            validation=SIN_GROSERIAS,
         ).props(f"outlined autogrow maxlength={datos.LARGO_MAX_DESCRIPCION}").classes("w-full")
 
         ui.label("¿Cuánto dura el aviso?").classes("text-sm font-semibold text-stone-700")
@@ -735,6 +828,7 @@ def pagina_inicio(request: Request) -> None:
 
     al_unirse = partial(abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
     al_salirse = partial(abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+    al_eliminar = partial(abrir_dialogo_eliminar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
 
     @ui.refreshable
     def lista() -> None:
@@ -772,7 +866,7 @@ def pagina_inicio(request: Request) -> None:
             return
 
         for aviso in visibles:
-            tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse)
+            tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar)
 
     def revisar_cambios() -> None:
         momento = ahora()
@@ -805,6 +899,7 @@ def pagina_aviso(aviso_id: int, request: Request) -> None:
 
     al_unirse = partial(abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
     al_salirse = partial(abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+    al_eliminar = partial(abrir_dialogo_eliminar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
 
     def leer() -> tuple[datos.Aviso | None, tuple | None]:
         momento = ahora()
@@ -825,7 +920,7 @@ def pagina_aviso(aviso_id: int, request: Request) -> None:
         motivo = aviso.motivo_cierre(momento)
         if motivo:
             aviso_de_cierre(aviso, motivo)
-        tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, modo="detalle")
+        tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, modo="detalle")
 
     def revisar_cambios() -> None:
         if leer()[1] != estado["firma"]:
@@ -855,6 +950,7 @@ def pagina_buzon(request: Request) -> None:
 
     al_unirse = partial(abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
     al_salirse = partial(abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+    al_eliminar = partial(abrir_dialogo_eliminar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
 
     def leer() -> tuple[list[datos.Aviso], list[datos.Aviso], tuple]:
         momento = ahora()
@@ -891,7 +987,7 @@ def pagina_buzon(request: Request) -> None:
                 "event_available",
             )
             for aviso in me_uni:
-                tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, modo="buzon")
+                tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, modo="buzon")
 
         if organizo:
             seccion(
@@ -900,7 +996,7 @@ def pagina_buzon(request: Request) -> None:
                 "campaign",
             )
             for aviso in organizo:
-                tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, modo="buzon")
+                tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, modo="buzon")
 
     def revisar_cambios() -> None:
         if leer()[2] != estado["firma"]:
