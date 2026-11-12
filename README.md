@@ -97,6 +97,40 @@ despertador tampoco gastan las horas gratis de Neon. Además, la página guarda
 los avisos en memoria y solo vuelve a leer la base de datos cuando alguien
 publica o se une.
 
+### Paso 5 — Activar tu panel de administración
+
+El panel está en `https://TU-ENLACE.onrender.com/admin`. No aparece en
+ningún botón de la página y pide una clave que solo tú conoces.
+
+1. En Render, entra al servicio `falta-uno` → **Environment** →
+   **Add Environment Variable**.
+2. Key: `CLAVE_ADMIN` · Value: una clave larga que no uses en otro lado
+   (por ejemplo, 4 o 5 palabras al azar: `tetera-volcan-azul-mesa-73`).
+3. Toca **Save Changes**. Render reinicia la página solo (1 a 3 minutos).
+4. Abre `/admin`, escribe la clave y toca **Entrar**. Ese navegador queda
+   como administrador hasta que toques **Cerrar sesión de administración**.
+
+La clave nunca se guarda en el código ni en GitHub. Si alguien se equivoca
+de clave 5 veces, esa conexión queda bloqueada 15 minutos. Si cambias la
+clave, usa **Cerrar la sesión de administración en todos los navegadores**.
+
+Qué hay en el panel:
+
+- **Resumen:** avisos abiertos, publicados, personas unidas, bloqueos y
+  avisos eliminados de la última semana.
+- **Palabras:** agrega palabras o frases al filtro **al instante**, sin
+  volver a publicar el código. Cada una se filtra *siempre* o *solo en
+  contexto inadecuado*: cuando aparece cerca (hasta 3 palabras) de alguna de
+  sus palabras de contexto, y nunca dentro de sus excepciones. Ejemplo:
+  «pico» con contexto «chupen, mi» y excepciones «y pico, pico de»: bloquea
+  "mi pico" pero no "a las 5 y pico" ni "el pico de la montaña". Incluye un
+  **probador** para ver si un texto se bloquearía, y la lista base completa.
+- **Bloqueados:** lo que el filtro no dejó publicar (fecha, campo, texto y
+  palabra detectada). Se guarda 30 días.
+- **Avisos:** los últimos 60 avisos, abiertos o no, con la opción de
+  eliminar cualquiera. Quienes se habían unido lo ven en su buzón como
+  "Cancelado por la administración".
+
 ### Hacer cambios después
 
 Edita un archivo en GitHub (o súbelo de nuevo) y Render publica la versión
@@ -138,8 +172,9 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
    palabra cambiar; no se publica hasta corregirla. Detecta trucos como
    `w3on`, `p.u.t.a`, `weooon` o `ctm`, y cuida no tachar palabras normales
    como "película", "Vergara" o "Putaendo". Si algo antiguo quedó guardado con
-   una de esas palabras, se muestra sin ella. Ningún filtro es perfecto: para
-   agregar o quitar palabras, edita las listas al comienzo de `filtro.py`.
+   una de esas palabras, se muestra sin ella. Ningún filtro es perfecto: puedes
+   agregar palabras al instante (y con contexto) desde el panel `/admin`, o
+   cambiar la lista base al comienzo de `filtro.py`.
 
 **¿Cómo sabe la página quién es quién, sin cuentas?** A cada navegador le da
 un identificador al azar guardado en una cookie que dura un año. Por eso el

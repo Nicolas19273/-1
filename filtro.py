@@ -20,14 +20,25 @@ Cuida no tachar palabras normales que contienen una grosería adentro, por
 ejemplo: película, ridículo, vehículo, computadora, disputa, Vergara,
 Putaendo, Culiacán, "las 5 y pico", "Coca-Cola", "polla" (lotería), año.
 
+Reglas propias (desde el panel /admin, sin tocar el código):
+  Cada regla es una palabra o frase que se filtra:
+    * siempre, o
+    * solo en contexto: cuando aparece cerca (hasta 3 palabras antes o
+      después) de alguna de sus "palabras de contexto";
+  y nunca dentro de sus "excepciones". Ejemplo: «pico» se filtra cerca de
+  «chupa» o «mi», pero nunca en «y pico» ni en «pico de».
+  Las carga datos.py con configurar(...) y valen al instante.
+
 Ningún filtro es perfecto: siempre puede aparecer una forma nueva de
-escribir algo. Para agregar o quitar palabras, edita las listas de abajo.
+escribir algo. Para agregar o quitar palabras de la lista base, edita las
+listas de abajo (o agrega reglas propias desde /admin).
 """
 
 from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass
 
 # --------------------------------------------------------------------------- #
 # Listas (se pueden escribir con o sin tildes; se normalizan solas)
@@ -152,6 +163,89 @@ def _es_mala(forma: str) -> bool:
 # --------------------------------------------------------------------------- #
 
 
+# --------------------------------------------------------------------------- #
+# Reglas propias (se agregan desde /admin)
+# --------------------------------------------------------------------------- #
+
+VENTANA = 3  # cuántas palabras antes o después se mira para el contexto
+
+
+@dataclass(frozen=True)
+class Regla:
+    id: int
+    palabra: str  # palabra o frase
+    cerca_de: tuple[str, ...] = ()  # vacío = se filtra siempre
+    excepto: tuple[str, ...] = ()  # frases donde nunca se filtra
+
+    @property
+    def siempre(self) -> bool:
+        return not self.cerca_de
+
+
+_reglas: list[tuple[Regla, list[str], list[list[str]], list[list[str]]]] = []
+
+
+def _formas(frase: str) -> list[str]:
+    return [normalizar(m.group()) for m in _PALABRA.finditer(frase or "")]
+
+
+def configurar(reglas: list[Regla]) -> None:
+    """Reemplaza las reglas propias. Valen desde el siguiente texto revisado."""
+    global _reglas
+    compiladas = []
+    for regla in reglas:
+        frase = _formas(regla.palabra)
+        if frase:
+            cerca = [f for f in (_formas(c) for c in regla.cerca_de) if f]
+            excepto = [f for f in (_formas(e) for e in regla.excepto) if f]
+            compiladas.append((regla, frase, cerca, excepto))
+    _reglas = compiladas
+
+
+def reglas_actuales() -> list[Regla]:
+    return [r for r, *_ in _reglas]
+
+
+def palabras_base() -> list[str]:
+    """La lista base (la de este archivo), para mostrarla en /admin."""
+    return sorted(set(PALABRAS.split()))
+
+
+def _igual(forma: str, objetivo: str) -> bool:
+    return forma == objetivo or (not _tiene_dobles(objetivo) and _sin_dobles(forma) == objetivo)
+
+
+def _apariciones(formas: list[str], frase: list[str]) -> list[int]:
+    n = len(frase)
+    return [
+        i
+        for i in range(len(formas) - n + 1)
+        if all(_igual(formas[i + k], frase[k]) for k in range(n))
+    ]
+
+
+def _tramos_de_reglas(fichas) -> list[tuple[int, int]]:
+    formas = [f for _, _, f in fichas]
+    tramos = []
+    for _regla, frase, cerca, excepto in _reglas:
+        for i in _apariciones(formas, frase):
+            j = i + len(frase)
+            # ¿Está dentro de una excepción? ("y pico", "pico de")
+            if any(a <= i and j <= a + len(e) for e in excepto for a in _apariciones(formas, e)):
+                continue
+            # ¿Tiene una palabra de contexto cerca?
+            if cerca:
+                desde, hasta = max(0, i - VENTANA), min(len(formas), j + VENTANA)
+                if not any(
+                    desde <= a and a + len(c) <= hasta and not (i <= a < j)
+                    for c in cerca
+                    for a in _apariciones(formas, c)
+                ):
+                    continue
+            tramos.append((fichas[i][0], fichas[j - 1][1]))
+    return tramos
+
+
 def encontrar(texto: str | None) -> list[tuple[int, int]]:
     """Devuelve los tramos (inicio, fin) del texto que hay que tapar."""
     if not texto:
@@ -186,6 +280,9 @@ def encontrar(texto: str | None) -> list[tuple[int, int]]:
                         tramos.append((fichas[a][0], fichas[b - 1][1]))
                         break
         i = max(j, i + 1)
+
+    # 4) Reglas propias (desde /admin), con su contexto
+    tramos.extend(_tramos_de_reglas(fichas))
 
     return _unir(tramos)
 

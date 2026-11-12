@@ -15,15 +15,18 @@ Páginas:
   /             tablero con los avisos abiertos
   /aviso/<id>   detalle de un aviso (para compartir el enlace)
   /buzon        «Mi buzón»: los avisos que publicaste y a los que te uniste
+  /admin        panel de administración (solo con la clave CLAVE_ADMIN)
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import hmac
 import os
 import re
 import tempfile
+import time
 import urllib.request
 import uuid
 from collections import Counter
@@ -69,7 +72,7 @@ DIAS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
 
 CIERRES = {
-    datos.CANCELADO: ("event_busy", "Aviso cancelado", "Quien lo publicó lo eliminó. Este evento ya no se realiza."),
+    datos.CANCELADO: ("event_busy", "Aviso cancelado", "Este aviso fue eliminado. El evento ya no se realiza."),
     datos.COMPLETO: ("groups", "¡Grupo completo!", "Ya están todos. Este aviso no recibe más gente."),
     datos.INICIADO: ("sports", "El evento ya comenzó", "El aviso se cerró a la hora del evento."),
     datos.VENCIDO: ("timer_off", "Aviso cerrado", "Se cumplió el plazo de {horas} horas."),
@@ -336,7 +339,10 @@ def estado_en_buzon(aviso: datos.Aviso, momento: datetime, persona_id: str | Non
             principal = "Ya no recibe más gente"
         secundario = f"Lo verás aquí hasta {texto_cuando(aviso.expira_en, momento)}."
     elif aviso.cancelado:
-        principal = "Cancelado por quien lo publicó 🚫"
+        if aviso.cancelado_por == "admin":
+            principal = "Cancelado por la administración 🚫"
+        else:
+            principal = "Cancelado por quien lo publicó 🚫"
         secundario = "Este evento ya no se realiza. Puedes quitarlo de tu buzón."
     else:
         if momento >= aviso.inicio_evento:
@@ -602,16 +608,20 @@ def abrir_dialogo_eliminar(
     persona_id: str | None,
     al_cambiar: Callable[[], None],
     al_terminar: Callable[[], None] | None = None,
+    como_admin: bool = False,
 ) -> None:
     aviso = datos.obtener_aviso(aviso_id)
-    if aviso is None or not aviso.es_de(persona_id) or aviso.cancelado:
+    permitido = aviso is not None and (
+        aviso.es_de(persona_id) or (como_admin and datos.es_admin(persona_id))
+    )
+    if not permitido or aviso.cancelado:
         ui.notify("Este aviso ya no se puede eliminar.", type="info", position="top")
         al_cambiar()
         return
 
     def confirmar() -> None:
         try:
-            datos.eliminar_aviso(aviso_id, persona_id)
+            datos.eliminar_aviso(aviso_id, persona_id, como_admin=como_admin)
         except datos.ErrorValidacion as error:
             ui.notify(str(error), type="negative", position="top")
             dialogo.close()
@@ -640,9 +650,10 @@ def abrir_dialogo_eliminar(
             "text-xl font-black text-stone-900 text-center w-full"
         )
         ui.label(aviso.titulo).classes("font-bold text-stone-700 text-center w-full -mt-3")
-        ui.label(
-            f"Desaparecerá del tablero y de tu buzón. {consecuencia} No se puede deshacer."
-        ).classes("text-sm text-stone-600 text-center w-full")
+        donde = "del tablero y de tu buzón" if aviso.es_de(persona_id) else "del tablero y del buzón de su dueño"
+        ui.label(f"Desaparecerá {donde}. {consecuencia} No se puede deshacer.").classes(
+            "text-sm text-stone-600 text-center w-full"
+        )
         with ui.row().classes("w-full gap-2 no-wrap"):
             ui.button("No, mantenerlo", on_click=dialogo.close).props(
                 "flat rounded no-caps color=grey-8"
@@ -1016,6 +1027,389 @@ def pagina_buzon(request: Request) -> None:
         ).classes("text-xs text-stone-400 text-center w-full mt-6")
 
     ui.timer(SEGUNDOS_ENTRE_REVISIONES, revisar_cambios)
+
+
+# --------------------------------------------------------------------------- #
+# Panel de administración (/admin): solo para quien administra la página
+#
+# Se activa creando en Render la variable de entorno CLAVE_ADMIN (ver README).
+# Quien escribe la clave correcta queda como administrador en ese navegador
+# hasta que cierre la sesión. La dirección /admin no aparece en ningún botón.
+# --------------------------------------------------------------------------- #
+
+CLAVE_ADMIN = os.environ.get("CLAVE_ADMIN", "")
+MAX_INTENTOS = 5  # intentos fallidos permitidos…
+MINUTOS_BLOQUEO = 15  # …cada tantos minutos, por dirección IP
+_intentos_fallidos: dict[str, list[float]] = {}
+
+
+def clave_correcta(clave: str | None) -> bool:
+    return bool(CLAVE_ADMIN) and hmac.compare_digest((clave or "").encode(), CLAVE_ADMIN.encode())
+
+
+def _demasiados_intentos(quien: str) -> bool:
+    limite = time.time() - MINUTOS_BLOQUEO * 60
+    recientes = [t for t in _intentos_fallidos.get(quien, []) if t > limite]
+    _intentos_fallidos[quien] = recientes
+    return len(recientes) >= MAX_INTENTOS
+
+
+def _anotar_intento_fallido(quien: str) -> None:
+    _intentos_fallidos.setdefault(quien, []).append(time.time())
+
+
+ESTADOS_ADMIN = {
+    None: "Abierto",
+    datos.COMPLETO: "Completo",
+    datos.INICIADO: "Ya empezó",
+    datos.VENCIDO: "Plazo cumplido",
+}
+
+
+def tarjeta_simple() -> ui.card:
+    return ui.card().classes("w-full rounded-2xl shadow-none border border-stone-200 p-5 gap-3")
+
+
+@ui.page("/admin", title="Falta Uno · Administración")
+def pagina_admin(request: Request) -> None:
+    preparar_pagina()
+    persona_id = persona_de(request)
+    cliente = getattr(request, "client", None)
+    ip = getattr(cliente, "host", None) or "desconocida"
+    capa = ui.element("div")
+
+    with ui.column().classes("w-full max-w-3xl mx-auto px-4 pt-6 pb-16 gap-4"):
+        encabezado(persona_id)
+        with ui.row().classes("items-center gap-2 no-wrap"):
+            ui.icon("admin_panel_settings", size="30px").classes("text-primary")
+            ui.label("Administración").classes("text-3xl font-black tracking-tight text-stone-900")
+
+        if not CLAVE_ADMIN:
+            with tarjeta_simple():
+                ui.label("El panel está desactivado").classes("text-lg font-bold text-stone-900")
+                ui.label(
+                    "Para activarlo, en Render entra a tu servicio → Environment → Add Environment "
+                    "Variable, crea CLAVE_ADMIN con una clave larga que solo tú conozcas y guarda. "
+                    "Render reinicia la página solo."
+                ).classes("text-stone-600")
+            return
+
+        if not datos.es_admin(persona_id):
+            _formulario_ingreso(persona_id, ip)
+            return
+
+        _panel(persona_id, capa)
+
+
+def _formulario_ingreso(persona_id: str | None, ip: str) -> None:
+    with tarjeta_simple():
+        ui.label("Esta sección es solo para quien administra la página.").classes("text-stone-600")
+        clave = ui.input("Clave de administración", password=True, password_toggle_button=True).props(
+            "outlined autofocus"
+        ).classes("w-full")
+
+        def entrar() -> None:
+            if _demasiados_intentos(ip):
+                ui.notify(
+                    f"Demasiados intentos. Espera {MINUTOS_BLOQUEO} minutos.", type="negative", position="top"
+                )
+                return
+            if not clave_correcta(clave.value):
+                _anotar_intento_fallido(ip)
+                ui.notify("Clave incorrecta.", type="negative", position="top")
+                return
+            try:
+                datos.agregar_admin(persona_id)
+            except datos.ErrorValidacion as error:
+                ui.notify(str(error), type="negative", position="top")
+                return
+            ui.navigate.to("/admin")
+
+        clave.on("keydown.enter", entrar)
+        ui.button("Entrar", icon="login", on_click=entrar).props("unelevated rounded no-caps").classes(
+            "self-end"
+        )
+
+
+def _panel(persona_id: str | None, capa: ui.element) -> None:
+    def sigo_siendo_admin() -> bool:
+        if datos.es_admin(persona_id):
+            return True
+        ui.notify("Tu sesión de administración se cerró.", type="warning", position="top")
+        ui.navigate.to("/admin")
+        return False
+
+    with ui.tabs().classes("w-full") as pestanas:
+        p_resumen = ui.tab("Resumen", icon="insights")
+        p_palabras = ui.tab("Palabras", icon="spellcheck")
+        p_bloqueados = ui.tab("Bloqueados", icon="block")
+        p_avisos = ui.tab("Avisos", icon="campaign")
+
+    with ui.tab_panels(pestanas, value=p_resumen).classes("w-full bg-transparent"):
+        # ------------------------------------------------------------ Resumen
+        with ui.tab_panel(p_resumen).classes("px-0 gap-4"):
+
+            @ui.refreshable
+            def cifras() -> None:
+                c = datos.estadisticas()
+                tarjetas = [
+                    ("Avisos abiertos ahora", c["abiertos"], "campaign"),
+                    ("Publicados (7 días)", c["publicados_7d"], "add_circle_outline"),
+                    ("Personas unidas (7 días)", c["unidos_7d"], "group_add"),
+                    ("Bloqueos del filtro (7 días)", c["bloqueos_7d"], "block"),
+                    ("Avisos eliminados (7 días)", c["cancelados_7d"], "delete_outline"),
+                    ("Reglas propias del filtro", c["reglas"], "spellcheck"),
+                ]
+                with ui.row().classes("w-full gap-3"):
+                    for titulo, valor, icono in tarjetas:
+                        with ui.card().classes(
+                            "rounded-2xl shadow-none border border-stone-200 p-4 gap-1"
+                        ).style("flex: 1 1 150px; min-width: 150px"):
+                            ui.icon(icono, size="22px").classes("text-primary")
+                            ui.label(str(valor)).classes("text-3xl font-black text-stone-900 leading-none")
+                            ui.label(titulo).classes("text-xs text-stone-500")
+                ui.label(f"Avisos publicados desde el comienzo: {c['avisos_total']}").classes(
+                    "text-sm text-stone-500"
+                )
+
+            cifras()
+
+            def cerrar_sesion() -> None:
+                datos.quitar_admin(persona_id)
+                ui.navigate.to("/admin")
+
+            def cerrar_todas() -> None:
+                n = datos.quitar_todos_los_admin()
+                ui.notify(f"Se cerraron {n} sesiones de administración.", type="info", position="top")
+                ui.navigate.to("/admin")
+
+            with ui.row().classes("w-full justify-between"):
+                ui.button("Actualizar", icon="refresh", on_click=cifras.refresh).props(
+                    "flat rounded no-caps color=grey-9"
+                )
+                ui.button("Cerrar sesión de administración", icon="logout", on_click=cerrar_sesion).props(
+                    "flat rounded no-caps color=red-8"
+                )
+            ui.button(
+                "Cerrar la sesión de administración en todos los navegadores",
+                icon="phonelink_lock",
+                on_click=cerrar_todas,
+            ).props("flat rounded no-caps dense color=red-8").classes("self-end")
+            ui.label(
+                "Úsalo si entraste desde un computador ajeno o si cambiaste la clave."
+            ).classes("text-xs text-stone-400 self-end -mt-3")
+
+        # ------------------------------------------------------------ Palabras
+        with ui.tab_panel(p_palabras).classes("px-0 gap-4"):
+            with tarjeta_simple():
+                ui.label("Agregar palabra o frase al filtro").classes("text-lg font-bold text-stone-900")
+                ui.label(
+                    "Se aplica al instante en toda la página, sin volver a publicar el código."
+                ).classes("text-sm text-stone-500 -mt-2")
+                campo_palabra = ui.input("Palabra o frase", placeholder="Ej: pico").props(
+                    f"outlined maxlength={datos.LARGO_MAX_REGLA}"
+                ).classes("w-full")
+                modo = ui.toggle(
+                    {"contexto": "Solo en contexto inadecuado", "siempre": "Siempre"},
+                    value="contexto",
+                    on_change=lambda: campo_cerca.set_visibility(modo.value == "contexto"),
+                ).props("spread no-caps unelevated rounded toggle-color=primary color=grey-3 text-color=grey-9").classes(
+                    "w-full"
+                )
+                campo_cerca = ui.input(
+                    "Se filtra si aparece cerca de… (separa con comas)",
+                    placeholder="Ej: chupa, chupen, mi, tu",
+                ).props("outlined").classes("w-full")
+                campo_excepto = ui.input(
+                    "Nunca se filtra en… (opcional, separa con comas)",
+                    placeholder="Ej: y pico, pico de",
+                ).props("outlined").classes("w-full")
+                ui.label(
+                    f"«Cerca» significa hasta {filtro.VENTANA} palabras antes o después. "
+                    "Las excepciones siempre ganan. Mayúsculas, tildes y trucos como p1c0 se detectan igual."
+                ).classes("text-xs text-stone-500")
+
+                def agregar() -> None:
+                    if not sigo_siendo_admin():
+                        return
+                    en_contexto = modo.value == "contexto"
+                    if en_contexto and not [p for p in (campo_cerca.value or "").split(",") if p.strip()]:
+                        ui.notify(
+                            "Escribe al menos una palabra de contexto, o elige «Siempre».",
+                            type="negative",
+                            position="top",
+                        )
+                        return
+                    try:
+                        regla = datos.agregar_regla(
+                            campo_palabra.value,
+                            cerca_de=campo_cerca.value if en_contexto else "",
+                            excepto=campo_excepto.value,
+                        )
+                    except datos.ErrorValidacion as error:
+                        ui.notify(str(error), type="negative", position="top")
+                        return
+                    ui.notify(f"«{regla.palabra}» agregada. Ya se está filtrando.", type="positive", position="top")
+                    campo_palabra.value = campo_cerca.value = campo_excepto.value = ""
+                    lista_reglas.refresh()
+                    probar()
+
+                ui.button("Agregar al filtro", icon="add", on_click=agregar).props(
+                    "unelevated rounded no-caps"
+                ).classes("self-end")
+
+            with tarjeta_simple():
+                ui.label("Probar el filtro").classes("text-lg font-bold text-stone-900")
+                prueba = ui.textarea(
+                    "Escribe un texto de ejemplo", on_change=lambda: probar()
+                ).props("outlined autogrow").classes("w-full")
+                resultado = ui.label("").classes("font-semibold")
+
+                def probar() -> None:
+                    texto = prueba.value or ""
+                    if not texto.strip():
+                        resultado.text = ""
+                        return
+                    malas = filtro.encontradas(texto)
+                    if malas:
+                        resultado.text = "🚫 Se bloquearía por: " + ", ".join(f"«{m}»" for m in malas)
+                    else:
+                        resultado.text = "✅ Se podría publicar"
+
+            def borrar_regla(regla_id: int, palabra: str) -> None:
+                if not sigo_siendo_admin():
+                    return
+                datos.borrar_regla(regla_id)
+                ui.notify(f"Se quitó «{palabra}» del filtro.", type="info", position="top")
+                lista_reglas.refresh()
+                probar()
+
+            @ui.refreshable
+            def lista_reglas() -> None:
+                propias = datos.reglas()
+                ui.label(f"Tus reglas ({len(propias)})").classes("text-lg font-black text-stone-900 mt-2")
+                if not propias:
+                    ui.label("Todavía no agregas palabras propias.").classes("text-stone-500")
+                for regla in propias:
+                    with tarjeta_simple():
+                        with ui.row().classes("w-full items-start justify-between no-wrap gap-2"):
+                            with ui.column().classes("gap-0.5"):
+                                ui.label(regla.palabra).classes("text-lg font-bold text-stone-900")
+                                if regla.siempre:
+                                    ui.label("Se filtra siempre").classes("text-sm text-stone-600")
+                                else:
+                                    ui.label("Se filtra cerca de: " + ", ".join(regla.cerca_de)).classes(
+                                        "text-sm text-stone-600"
+                                    )
+                                if regla.excepto:
+                                    ui.label("Nunca en: " + ", ".join(regla.excepto)).classes(
+                                        "text-sm text-stone-500"
+                                    )
+                            ui.button(
+                                icon="delete_outline", on_click=partial(borrar_regla, regla.id, regla.palabra)
+                            ).props("flat round color=red-8").tooltip("Quitar del filtro")
+
+            lista_reglas()
+
+            base = filtro.palabras_base()
+            with ui.expansion(f"Lista base ({len(base)} palabras, se filtran siempre)", icon="list").classes(
+                "w-full"
+            ):
+                ui.label(", ".join(base)).classes("text-xs text-stone-500")
+                ui.label("La lista base está en filtro.py: para cambiarla hay que editar ese archivo.").classes(
+                    "text-xs text-stone-400 mt-2"
+                )
+
+        # ------------------------------------------------------------ Bloqueados
+        with ui.tab_panel(p_bloqueados).classes("px-0 gap-4"):
+
+            def borrar_registro() -> None:
+                if not sigo_siendo_admin():
+                    return
+                datos.borrar_filtrados()
+                ui.notify("Registro borrado.", type="info", position="top")
+                lista_bloqueados.refresh()
+                cifras.refresh()
+
+            with ui.row().classes("w-full justify-between items-center"):
+                ui.label(
+                    f"Lo que el filtro no dejó publicar (se guarda {datos.DIAS_REGISTRO_FILTRADOS} días)."
+                ).classes("text-sm text-stone-500")
+                with ui.row().classes("gap-1"):
+                    ui.button(icon="refresh", on_click=lambda: lista_bloqueados.refresh()).props(
+                        "flat round color=grey-9"
+                    ).tooltip("Actualizar")
+                    ui.button("Borrar registro", icon="delete_sweep", on_click=borrar_registro).props(
+                        "flat rounded no-caps color=red-8"
+                    )
+
+            @ui.refreshable
+            def lista_bloqueados() -> None:
+                momento = ahora()
+                registro = datos.filtrados_recientes(100)
+                if not registro:
+                    ui.label("No hay bloqueos registrados.").classes("text-stone-500")
+                for bloqueo in registro:
+                    with tarjeta_simple():
+                        with ui.row().classes("w-full items-center justify-between no-wrap"):
+                            etiqueta(bloqueo.campo, "block", rojo=True)
+                            ui.label(texto_fecha_evento(bloqueo.momento, momento)).classes(
+                                "text-xs text-stone-500"
+                            )
+                        ui.label(bloqueo.texto).classes("text-stone-800 whitespace-pre-line break-words")
+                        ui.label("Detectó: " + ", ".join(f"«{p}»" for p in bloqueo.palabras)).classes(
+                            "text-xs font-semibold text-red-800"
+                        )
+
+            lista_bloqueados()
+
+        # ------------------------------------------------------------ Avisos
+        with ui.tab_panel(p_avisos).classes("px-0 gap-4"):
+            ui.label("Los últimos 60 avisos, abiertos o no. Puedes eliminar cualquiera.").classes(
+                "text-sm text-stone-500"
+            )
+
+            def tras_eliminar() -> None:
+                lista_avisos.refresh()
+                cifras.refresh()
+
+            @ui.refreshable
+            def lista_avisos() -> None:
+                momento = ahora()
+                avisos = datos.todos_los_avisos(60)
+                if not avisos:
+                    ui.label("Todavía no hay avisos.").classes("text-stone-500")
+                for aviso in avisos:
+                    with tarjeta_simple():
+                        with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
+                            ui.label(aviso.titulo).classes(
+                                "text-lg font-bold text-stone-900 leading-snug cursor-pointer hover:underline"
+                            ).on("click", partial(ui.navigate.to, f"/aviso/{aviso.id}"))
+                            if aviso.cancelado:
+                                quien = "por admin" if aviso.cancelado_por == "admin" else "por su dueño"
+                                etiqueta(f"Eliminado {quien}", "delete_outline", rojo=True)
+                            else:
+                                etiqueta(ESTADOS_ADMIN[aviso.motivo_cierre(momento)], "info")
+                        ui.label(
+                            f"{aviso.nombre_categoria} · {aviso.lugar} · "
+                            f"{texto_fecha_evento(aviso.inicio_evento, momento)} · "
+                            f"{aviso.ocupados} de {aviso.personas_necesarias}"
+                        ).classes("text-sm text-stone-600")
+                        if not aviso.cancelado:
+                            ui.button(
+                                "Eliminar",
+                                icon="delete_outline",
+                                on_click=partial(
+                                    abrir_dialogo_eliminar,
+                                    aviso.id,
+                                    capa,
+                                    persona_id,
+                                    tras_eliminar,
+                                    como_admin=True,
+                                ),
+                            ).props("flat rounded no-caps dense color=red-8").classes("self-start -ml-1")
+
+            lista_avisos()
 
 
 # --------------------------------------------------------------------------- #
