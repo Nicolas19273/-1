@@ -70,13 +70,6 @@ LARGO_LUGAR = (3, 120)
 LARGO_MAX_DESCRIPCION = 500
 VALOR_MAXIMO = 80_000  # tope del valor por persona, en pesos chilenos
 
-NIVELES: dict[str, str] = {
-    "cualquiera": "Cualquier nivel",
-    "principiante": "Principiante",
-    "intermedio": "Intermedio",
-    "avanzado": "Avanzado",
-}
-
 # clave interna -> nombre visible
 CATEGORIAS: dict[str, str] = {
     "futbol": "Fútbol",
@@ -134,7 +127,6 @@ class Aviso:
     lat: float | None = None  # ubicación exacta, si se eligió en el mapa
     lng: float | None = None
     valor: int | None = None  # pesos por persona (0 = gratis; None en avisos antiguos)
-    nivel: str | None = None  # clave de NIVELES
 
     @property
     def tiene_ubicacion(self) -> bool:
@@ -342,7 +334,6 @@ _COLUMNAS_NUEVAS = (
     ("avisos", "lat", "DOUBLE PRECISION"),  # ubicación exacta (opcional)
     ("avisos", "lng", "DOUBLE PRECISION"),
     ("avisos", "valor", "INTEGER"),  # pesos por persona: 0 = gratis, NULL = no se indicó
-    ("avisos", "nivel", "TEXT"),
 )
 _INDICES_NUEVOS = (
     "CREATE INDEX IF NOT EXISTS idx_avisos_creador ON avisos(creador_id)",
@@ -631,7 +622,6 @@ def _fila_a_aviso(fila, inscritos: list[Participante], comentarios: int = 0) -> 
         lat=float(fila["lat"]) if fila["lat"] is not None else None,
         lng=float(fila["lng"]) if fila["lng"] is not None else None,
         valor=int(fila["valor"]) if fila["valor"] is not None else None,
-        nivel=fila["nivel"],
     )
 
 
@@ -696,7 +686,6 @@ def crear_aviso(
     lat: float | None = None,
     lng: float | None = None,
     valor: int | str | None = None,
-    nivel: str | None = None,
     ahora: datetime | None = None,
 ) -> Aviso:
     """Valida los datos y publica el aviso. Lanza ErrorValidacion si algo falla."""
@@ -737,8 +726,6 @@ def crear_aviso(
         )
 
     valor = None if valor is None else parsear_valor(valor)
-    if nivel is not None and nivel not in NIVELES:
-        raise ErrorValidacion("Elige un nivel de la lista.")
 
     if len(descripcion) > LARGO_MAX_DESCRIPCION:
         raise ErrorValidacion(f"Detalles: máximo {LARGO_MAX_DESCRIPCION} caracteres.")
@@ -756,8 +743,8 @@ def crear_aviso(
             INSERT INTO avisos (titulo, categoria, descripcion, lugar, inicio_evento,
                                 personas_actuales, personas_necesarias, creador,
                                 creador_id, duracion_horas, creado_en, expira_en, lat, lng,
-                                valor, nivel)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                valor)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 titulo,
@@ -775,7 +762,6 @@ def crear_aviso(
                 lat,
                 lng,
                 valor,
-                nivel,
             ),
         )
     _invalidar_cache()

@@ -323,14 +323,12 @@ def dato(icono: str, texto: str) -> None:
 
 
 def datos_clave(aviso: datos.Aviso, momento: datetime) -> None:
-    """Dónde, cuándo, cuánto cuesta y nivel."""
+    """Dónde, cuándo y cuánto cuesta."""
     with ui.column().classes("gap-1"):
         dato("place", aviso.lugar)
         dato("schedule", texto_fecha_evento(aviso.inicio_evento, momento))
         if aviso.valor is not None:
             dato("payments", datos.texto_valor(aviso.valor))
-        if aviso.nivel and aviso.nivel != "cualquiera":
-            dato("signal_cellular_alt", f"Nivel: {datos.NIVELES.get(aviso.nivel, aviso.nivel)}")
 
 
 def etiqueta(texto: str, icono: str, rojo: bool = False) -> None:
@@ -467,7 +465,7 @@ def tarjeta_aviso(
                 "click", lambda: ui.navigate.to(f"/aviso/{aviso.id}")
             )
 
-        # Dónde, cuándo, cuánto y nivel
+        # Dónde, cuándo y cuánto
         datos_clave(aviso, momento)
 
         if aviso.descripcion:
@@ -913,7 +911,6 @@ def abrir_dialogo_crear(
                 lat=ubicacion["lat"],
                 lng=ubicacion["lng"],
                 valor=0 if campo_cobro.value == "gratis" else campo_valor.value,
-                nivel=campo_nivel.value,
             )
         except datos.ErrorValidacion as error:
             ui.notify(str(error), type="negative", position="top")
@@ -1030,10 +1027,6 @@ def abrir_dialogo_crear(
         ).props("outlined prefix=$ suffix=CLP inputmode=numeric maxlength=7").classes("w-full")
         vista_valor = ui.label("").classes("text-xs text-stone-500 -mt-2")
         campo_valor.set_visibility(False)
-
-        campo_nivel = ui.select(datos.NIVELES, label="Nivel (opcional)", value="cualquiera").props(
-            "outlined"
-        ).classes("w-full")
 
         campo_descripcion = ui.textarea(
             "Detalles (opcional)",

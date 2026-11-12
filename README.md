@@ -155,7 +155,6 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
    - **Valor por persona:** «Gratis ($0)» o «Tiene costo». El monto solo
      acepta números en pesos (2000 o 2.000), muestra cómo se verá
      («$2.000 por persona») y tiene un tope de **$80.000**.
-   - **Nivel (opcional):** cualquier nivel, principiante, intermedio o avanzado.
 2. El aviso aparece para todos en el tablero. Las páginas abiertas se
    actualizan solas.
 3. Otra persona toca **Unirme**, escribe su nombre y queda anotada. Al
