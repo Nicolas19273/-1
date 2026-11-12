@@ -9,15 +9,23 @@ Dónde se guardan los datos:
 La interfaz (app.py) solo llama a las funciones de este archivo: si más
 adelante rehacemos el diseño, esta parte no se toca.
 
+Quién es quién (sin cuentas ni contraseñas):
+  Cada navegador recibe un identificador al azar guardado en una cookie
+  (lo pone app.py). Con él sabemos qué avisos publicó esa persona y a cuáles
+  se unió, para mostrárselos en su buzón.
+
 Reglas:
   * Quien publica indica cuántos son ahora y cuántos necesitan en total.
+    No necesita escribir su nombre.
   * El aviso dura 24 o 48 horas (lo elige quien publica).
-  * El aviso se cierra cuando:
+  * En el tablero público, el aviso desaparece cuando:
       - se completan los cupos, o
       - se cumple el plazo de 24/48 h, o
       - llega la hora del evento (no tiene sentido unirse a algo que ya empezó).
-  * Un aviso cerrado deja de aparecer en la lista, pero su página de detalle
-    (/aviso/<id>) sigue mostrando quiénes se unieron.
+  * En el buzón de quien lo publicó, el aviso sigue visible (aunque se llene)
+    hasta que se cumple su plazo de 24/48 h.
+  * En el buzón de quien se unió, el aviso sigue visible hasta unas horas
+    después de que empieza el evento, para recordar dónde y cuándo es.
 """
 
 from __future__ import annotations
@@ -43,6 +51,7 @@ RUTA_BD = Path(__file__).with_name("avisos.db")  # SQLite en tu computador
 
 DURACIONES_PERMITIDAS = (24, 48)
 MAX_PERSONAS = 100
+HORAS_EN_BUZON_TRAS_INICIO = 3  # el evento sigue en el buzón hasta 3 h después de empezar
 
 LARGO_NOMBRE = (2, 40)
 LARGO_TITULO = (3, 80)
@@ -78,6 +87,12 @@ class ErrorValidacion(Exception):
 
 
 @dataclass(frozen=True)
+class Participante:
+    nombre: str
+    persona_id: str | None  # identificador del navegador (None en avisos antiguos)
+
+
+@dataclass(frozen=True)
 class Aviso:
     id: int
     titulo: str
@@ -87,15 +102,20 @@ class Aviso:
     inicio_evento: datetime
     personas_actuales: int  # cuántos eran al publicar (incluye a quien publica)
     personas_necesarias: int  # total que necesitan para el evento
-    creador: str
+    creador: str  # nombre de quien publicó (vacío en avisos nuevos)
+    creador_id: str | None  # navegador de quien publicó
     duracion_horas: int
     creado_en: datetime
     expira_en: datetime
-    participantes: tuple[str, ...]  # quienes se unieron desde la página
+    inscritos: tuple[Participante, ...]  # quienes se unieron desde la página
+
+    @property
+    def participantes(self) -> tuple[str, ...]:
+        return tuple(p.nombre for p in self.inscritos)
 
     @property
     def ocupados(self) -> int:
-        return self.personas_actuales + len(self.participantes)
+        return self.personas_actuales + len(self.inscritos)
 
     @property
     def cupos_libres(self) -> int:
@@ -109,6 +129,11 @@ class Aviso:
     def cierra_en(self) -> datetime:
         """Momento en que el aviso deja de aceptar gente por tiempo."""
         return min(self.expira_en, self.inicio_evento)
+
+    @property
+    def visible_en_buzon_hasta(self) -> datetime:
+        """Hasta cuándo lo ve en su buzón alguien que se unió."""
+        return self.inicio_evento + timedelta(hours=HORAS_EN_BUZON_TRAS_INICIO)
 
     @property
     def nombre_categoria(self) -> str:
@@ -127,6 +152,14 @@ class Aviso:
 
     def esta_abierto(self, ahora: datetime | None = None) -> bool:
         return self.motivo_cierre(ahora) is None
+
+    def es_de(self, persona_id: str | None) -> bool:
+        """¿Lo publicó esta persona?"""
+        return bool(persona_id) and persona_id == self.creador_id
+
+    def tiene_inscrito(self, persona_id: str | None) -> bool:
+        """¿Esta persona ya se unió?"""
+        return bool(persona_id) and any(p.persona_id == persona_id for p in self.inscritos)
 
 
 # --------------------------------------------------------------------------- #
@@ -183,6 +216,17 @@ CREATE INDEX IF NOT EXISTS idx_participantes_aviso ON participantes(aviso_id);
 CREATE INDEX IF NOT EXISTS idx_avisos_cierre ON avisos(expira_en, inicio_evento)
 """
 # (los horarios se guardan como segundos Unix: un número entero)
+
+# Columnas agregadas después de la primera versión. Se suman a las tablas que
+# ya existen sin borrar nada (por eso no están en el CREATE TABLE de arriba).
+_COLUMNAS_NUEVAS = (
+    ("avisos", "creador_id", "TEXT"),
+    ("participantes", "persona_id", "TEXT"),
+)
+_INDICES_NUEVOS = (
+    "CREATE INDEX IF NOT EXISTS idx_avisos_creador ON avisos(creador_id)",
+    "CREATE INDEX IF NOT EXISTS idx_participantes_persona ON participantes(persona_id)",
+)
 
 
 def usa_postgres() -> bool:
@@ -241,6 +285,16 @@ class _Conexion:
             raise
         self._con.execute("COMMIT")
 
+    def _columnas(self, tabla: str) -> set[str]:
+        if self.es_postgres:
+            filas = self.ejecutar(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = ?",
+                (tabla,),
+            ).fetchall()
+            return {f["column_name"] for f in filas}
+        return {f["name"] for f in self._con.execute(f"PRAGMA table_info({tabla})")}
+
     def crear_tablas(self) -> None:
         esquema = _ESQUEMA_POSTGRES if self.es_postgres else _ESQUEMA_SQLITE
         if not self.es_postgres:
@@ -248,6 +302,12 @@ class _Conexion:
         for sentencia in esquema.split(";"):
             if sentencia.strip():
                 self._con.execute(sentencia)
+        # Actualiza tablas creadas por versiones anteriores (no borra nada).
+        for tabla, columna, tipo in _COLUMNAS_NUEVAS:
+            if columna not in self._columnas(tabla):
+                self._con.execute(f"ALTER TABLE {tabla} ADD COLUMN {columna} {tipo}")
+        for sentencia in _INDICES_NUEVOS:
+            self._con.execute(sentencia)
 
     def cerrar(self) -> None:
         self._con.close()
@@ -263,7 +323,7 @@ def _conexion() -> Iterator[_Conexion]:
 
 
 def inicializar() -> None:
-    """Crea las tablas si no existen. Se puede llamar las veces que sea."""
+    """Crea o actualiza las tablas. Se puede llamar las veces que sea."""
     with _conexion() as con:
         con.crear_tablas()
     _invalidar_cache()
@@ -274,25 +334,25 @@ def inicializar() -> None:
 #
 # Cada página abierta revisa cada pocos segundos si hay cambios. Para no
 # consultar la base de datos todo el rato (la de Neon gratis tiene horas de
-# cómputo limitadas), guardamos la lista en memoria y solo la volvemos a leer
-# cuando alguien publica o se une. Funciona porque la app corre en un solo
-# proceso, que es como corre NiceGUI.
+# cómputo limitadas), guardamos las listas en memoria y solo las volvemos a
+# leer cuando alguien publica o se une. Funciona porque la app corre en un
+# solo proceso, que es como corre NiceGUI.
 # --------------------------------------------------------------------------- #
 
 _candado = threading.Lock()
 _version = 0
-_cache_activos: list[Aviso] | None = None
-_cache_activos_desde: datetime | None = None
+_cache_activos: tuple[datetime, list[Aviso]] | None = None
 _cache_detalle: dict[int, Aviso] = {}
+_cache_buzon: dict[str, tuple[datetime, list[Aviso], list[Aviso]]] = {}
 
 
 def _invalidar_cache() -> None:
-    global _version, _cache_activos, _cache_activos_desde
+    global _version, _cache_activos
     with _candado:
         _version += 1
         _cache_activos = None
-        _cache_activos_desde = None
         _cache_detalle.clear()
+        _cache_buzon.clear()
 
 
 # --------------------------------------------------------------------------- #
@@ -354,7 +414,7 @@ def armar_fecha_hora(fecha: str | None, hora: str | None) -> datetime:
     return momento.replace(tzinfo=ZONA_HORARIA)
 
 
-def _fila_a_aviso(fila, participantes: list[str]) -> Aviso:
+def _fila_a_aviso(fila, inscritos: list[Participante]) -> Aviso:
     return Aviso(
         id=int(fila["id"]),
         titulo=fila["titulo"],
@@ -364,27 +424,39 @@ def _fila_a_aviso(fila, participantes: list[str]) -> Aviso:
         inicio_evento=_de_ts(fila["inicio_evento"]),
         personas_actuales=int(fila["personas_actuales"]),
         personas_necesarias=int(fila["personas_necesarias"]),
-        creador=fila["creador"],
+        creador=fila["creador"] or "",
+        creador_id=fila["creador_id"],
         duracion_horas=int(fila["duracion_horas"]),
         creado_en=_de_ts(fila["creado_en"]),
         expira_en=_de_ts(fila["expira_en"]),
-        participantes=tuple(participantes),
+        inscritos=tuple(inscritos),
     )
 
 
-def _participantes_de(con: _Conexion, ids: list[int]) -> dict[int, list[str]]:
-    resultado: dict[int, list[str]] = {i: [] for i in ids}
+def _inscritos_de(con: _Conexion, ids: list[int]) -> dict[int, list[Participante]]:
+    resultado: dict[int, list[Participante]] = {i: [] for i in ids}
     if not ids:
         return resultado
     marcas = ",".join("?" * len(ids))
     filas = con.ejecutar(
-        f"SELECT aviso_id, nombre FROM participantes "
+        f"SELECT aviso_id, nombre, persona_id FROM participantes "
         f"WHERE aviso_id IN ({marcas}) ORDER BY unido_en, id",
         ids,
     ).fetchall()
     for fila in filas:
-        resultado[int(fila["aviso_id"])].append(fila["nombre"])
+        resultado[int(fila["aviso_id"])].append(Participante(fila["nombre"], fila["persona_id"]))
     return resultado
+
+
+def _leer_avisos(con: _Conexion, sql: str, parametros) -> list[Aviso]:
+    """Ejecuta un SELECT de avisos y les agrega sus participantes (sin repetir)."""
+    filas, vistos = [], set()
+    for fila in con.ejecutar(sql, parametros).fetchall():
+        if int(fila["id"]) not in vistos:
+            vistos.add(int(fila["id"]))
+            filas.append(fila)
+    inscritos = _inscritos_de(con, [int(f["id"]) for f in filas])
+    return [_fila_a_aviso(f, inscritos[int(f["id"])]) for f in filas]
 
 
 # --------------------------------------------------------------------------- #
@@ -394,7 +466,6 @@ def _participantes_de(con: _Conexion, ids: list[int]) -> dict[int, list[str]]:
 
 def crear_aviso(
     *,
-    creador: str,
     titulo: str,
     categoria: str,
     lugar: str,
@@ -403,14 +474,16 @@ def crear_aviso(
     personas_necesarias,
     duracion_horas,
     descripcion: str = "",
+    creador_id: str | None = None,
+    creador: str = "",
     ahora: datetime | None = None,
 ) -> Aviso:
     """Valida los datos y publica el aviso. Lanza ErrorValidacion si algo falla."""
     ahora = _ahora(ahora)
 
-    creador = limpiar(creador)
     titulo = limpiar(titulo)
     lugar = limpiar(lugar)
+    creador = limpiar(creador)[: LARGO_NOMBRE[1]]
     descripcion = (descripcion or "").strip()
 
     # Se valida en el mismo orden en que aparecen los campos del formulario.
@@ -445,8 +518,6 @@ def crear_aviso(
     if duracion not in DURACIONES_PERMITIDAS:
         raise ErrorValidacion("El aviso puede durar 24 o 48 horas.")
 
-    _validar_largo(creador, "Tu nombre", *LARGO_NOMBRE)
-
     expira_en = ahora + timedelta(hours=duracion)
 
     with _conexion() as con:
@@ -454,8 +525,8 @@ def crear_aviso(
             """
             INSERT INTO avisos (titulo, categoria, descripcion, lugar, inicio_evento,
                                 personas_actuales, personas_necesarias, creador,
-                                duracion_horas, creado_en, expira_en)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                creador_id, duracion_horas, creado_en, expira_en)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 titulo,
@@ -466,6 +537,7 @@ def crear_aviso(
                 actuales,
                 necesarias,
                 creador,
+                creador_id or None,
                 duracion,
                 _a_ts(ahora),
                 _a_ts(expira_en),
@@ -486,10 +558,10 @@ def obtener_aviso(aviso_id: int) -> Aviso | None:
         version = _version
 
     with _conexion() as con:
-        fila = con.ejecutar("SELECT * FROM avisos WHERE id = ?", (aviso_id,)).fetchone()
-        if fila is None:
-            return None
-        aviso = _fila_a_aviso(fila, _participantes_de(con, [aviso_id])[aviso_id])
+        encontrados = _leer_avisos(con, "SELECT * FROM avisos WHERE id = ?", (aviso_id,))
+    if not encontrados:
+        return None
+    aviso = encontrados[0]
 
     with _candado:
         if version == _version:  # nadie escribió mientras leíamos
@@ -498,17 +570,18 @@ def obtener_aviso(aviso_id: int) -> Aviso | None:
 
 
 def avisos_activos(ahora: datetime | None = None) -> list[Aviso]:
-    """Avisos abiertos (con cupo y dentro de plazo), del evento más próximo al más lejano."""
-    global _cache_activos, _cache_activos_desde
+    """Tablero público: avisos con cupo y dentro de plazo, del más próximo al más lejano."""
+    global _cache_activos
     ahora = _ahora(ahora)
 
     with _candado:
-        lista, desde, version = _cache_activos, _cache_activos_desde, _version
+        guardado, version = _cache_activos, _version
 
-    if lista is None or desde is None or ahora < desde:
+    if guardado is None or ahora < guardado[0]:
         ts = _a_ts(ahora)
         with _conexion() as con:
-            filas = con.ejecutar(
+            lista = _leer_avisos(
+                con,
                 """
                 SELECT a.*
                 FROM avisos a
@@ -519,18 +592,84 @@ def avisos_activos(ahora: datetime | None = None) -> list[Aviso]:
                 ORDER BY a.inicio_evento ASC, a.id ASC
                 """,
                 (ts, ts),
-            ).fetchall()
-            nombres = _participantes_de(con, [int(f["id"]) for f in filas])
-        lista = [_fila_a_aviso(f, nombres[int(f["id"])]) for f in filas]
+            )
         with _candado:
             if version == _version:
-                _cache_activos, _cache_activos_desde = lista, ahora
+                _cache_activos = (ahora, lista)
+    else:
+        lista = guardado[1]
 
     # Lo que se cerró por tiempo desde la última lectura se filtra aquí.
     return [a for a in lista if a.esta_abierto(ahora)]
 
 
-def unirse(aviso_id: int, nombre: str, ahora: datetime | None = None) -> Aviso:
+def mi_buzon(persona_id: str | None, ahora: datetime | None = None) -> tuple[list[Aviso], list[Aviso]]:
+    """
+    Devuelve (me_uni, organizo) para el buzón de una persona.
+
+    * me_uni: avisos a los que se unió, hasta unas horas después del evento.
+    * organizo: avisos que publicó, hasta que se cumple su plazo de 24/48 h
+      (aunque ya se hayan llenado).
+    """
+    if not persona_id:
+        return [], []
+    ahora = _ahora(ahora)
+
+    with _candado:
+        guardado, version = _cache_buzon.get(persona_id), _version
+
+    if guardado is None or ahora < guardado[0]:
+        ts = _a_ts(ahora)
+        with _conexion() as con:
+            me_uni = _leer_avisos(
+                con,
+                """
+                SELECT a.* FROM avisos a
+                JOIN participantes p ON p.aviso_id = a.id
+                WHERE p.persona_id = ? AND a.inicio_evento > ?
+                ORDER BY a.inicio_evento ASC, a.id ASC
+                """,
+                (persona_id, ts - HORAS_EN_BUZON_TRAS_INICIO * 3600),
+            )
+            organizo = _leer_avisos(
+                con,
+                """
+                SELECT * FROM avisos
+                WHERE creador_id = ? AND expira_en > ?
+                ORDER BY inicio_evento ASC, id ASC
+                """,
+                (persona_id, ts),
+            )
+        with _candado:
+            if version == _version:
+                _cache_buzon[persona_id] = (ahora, me_uni, organizo)
+    else:
+        _, me_uni, organizo = guardado
+
+    return (
+        [a for a in me_uni if ahora < a.visible_en_buzon_hasta],
+        [a for a in organizo if ahora < a.expira_en],
+    )
+
+
+def nombre_usado(persona_id: str | None) -> str:
+    """El último nombre con que esta persona se unió a algo (para no reescribirlo)."""
+    if not persona_id:
+        return ""
+    with _conexion() as con:
+        fila = con.ejecutar(
+            "SELECT nombre FROM participantes WHERE persona_id = ? ORDER BY id DESC LIMIT 1",
+            (persona_id,),
+        ).fetchone()
+    return fila["nombre"] if fila else ""
+
+
+def unirse(
+    aviso_id: int,
+    nombre: str,
+    persona_id: str | None = None,
+    ahora: datetime | None = None,
+) -> Aviso:
     """
     Suma a una persona al aviso y devuelve el aviso actualizado.
 
@@ -547,7 +686,12 @@ def unirse(aviso_id: int, nombre: str, ahora: datetime | None = None) -> Aviso:
         if fila is None:
             raise ErrorValidacion("Este aviso no existe.")
 
-        aviso = _fila_a_aviso(fila, _participantes_de(con, [aviso_id])[aviso_id])
+        aviso = _fila_a_aviso(fila, _inscritos_de(con, [aviso_id])[aviso_id])
+        if aviso.es_de(persona_id):
+            raise ErrorValidacion("Este aviso es tuyo: ya cuentas dentro del grupo.")
+        if aviso.tiene_inscrito(persona_id):
+            raise ErrorValidacion("Ya estás anotado en este aviso. Míralo en tu buzón.")
+
         motivo = aviso.motivo_cierre(ahora)
         if motivo == COMPLETO:
             raise ErrorValidacion("Llegaste tarde: el grupo ya se completó.")
@@ -556,7 +700,7 @@ def unirse(aviso_id: int, nombre: str, ahora: datetime | None = None) -> Aviso:
         if motivo == VENCIDO:
             raise ErrorValidacion("Este aviso ya cerró: se acabó su plazo.")
 
-        ya_estan = {_clave_nombre(n) for n in (aviso.creador, *aviso.participantes)}
+        ya_estan = {_clave_nombre(n) for n in (aviso.creador, *aviso.participantes) if n}
         if _clave_nombre(nombre) in ya_estan:
             raise ErrorValidacion(
                 f"Ya hay un «{nombre}» en este aviso. "
@@ -564,8 +708,8 @@ def unirse(aviso_id: int, nombre: str, ahora: datetime | None = None) -> Aviso:
             )
 
         con.ejecutar(
-            "INSERT INTO participantes (aviso_id, nombre, unido_en) VALUES (?, ?, ?)",
-            (aviso_id, nombre, _a_ts(ahora)),
+            "INSERT INTO participantes (aviso_id, nombre, persona_id, unido_en) VALUES (?, ?, ?, ?)",
+            (aviso_id, nombre, persona_id or None, _a_ts(ahora)),
         )
     _invalidar_cache()
 

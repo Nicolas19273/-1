@@ -108,15 +108,30 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
 
 1. Toca el botón **+** y completa el aviso: título, categoría, lugar, fecha,
    hora, cuántos son, cuántos necesitan, detalles y si dura **24 o 48 horas**.
-2. El aviso aparece para todos. Las páginas abiertas se actualizan solas.
-3. Otra persona toca **Unirme**, escribe su nombre y queda anotada.
-4. El aviso **desaparece de la lista** cuando se completan los cupos, cuando
-   termina su plazo de 24/48 h o cuando llega la hora del evento.
-5. Cada aviso tiene su propia página (`/aviso/<número>`) donde se ve quiénes
-   van, incluso después de cerrarse. Al publicar se muestra ese enlace.
+   Quien publica **no necesita escribir su nombre**.
+2. El aviso aparece para todos en el tablero. Las páginas abiertas se
+   actualizan solas.
+3. Otra persona toca **Unirme**, escribe su nombre y queda anotada. Al
+   confirmar ve el resumen completo (lugar, hora, detalles) y el evento se
+   guarda en su **buzón**. La próxima vez su nombre ya aparece escrito.
+4. En el **tablero**, el aviso desaparece cuando se completan los cupos,
+   cuando termina su plazo de 24/48 h o cuando llega la hora del evento.
+5. El botón **Buzón** (arriba a la derecha, con un contador) abre `/buzon`:
+   - **Me uní:** los eventos a los que te uniste, con todos los detalles.
+     Se quitan solos 3 horas después de que empieza cada evento.
+   - **Mis avisos:** los que publicaste, con quiénes se unieron. Siguen ahí
+     **aunque se llenen**, hasta que termina su plazo de 24 o 48 horas.
+6. Cada aviso tiene su propia página (`/aviso/<número>`) para compartir el
+   enlace por WhatsApp. Al publicar se muestra ese enlace.
+
+**¿Cómo sabe la página quién es quién, sin cuentas?** A cada navegador le da
+un identificador al azar guardado en una cookie que dura un año. Por eso el
+buzón es de *ese* navegador: si alguien entra desde otro teléfono, en modo
+incógnito o borra las cookies, empieza con un buzón vacío.
 
 Si dos personas tocan «Unirme» al mismo tiempo por el último cupo, solo una lo
 consigue (la base de datos bloquea el aviso mientras anota a cada persona).
+Tampoco se puede unir dos veces el mismo navegador, ni quien publicó el aviso.
 
 ---
 
