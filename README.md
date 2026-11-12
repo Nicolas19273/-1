@@ -251,7 +251,9 @@ en un archivo local `avisos.db`, aparte de los de internet.
 | `render.yaml`      | Las instrucciones para que Render publique la página gratis. |
 
 Ajustes rápidos: zona horaria (`ZONA_HORARIA`) y categorías (`CATEGORIAS`) en
-`datos.py`; colores (`COLOR_PRINCIPAL`, `FONDO`) e íconos (`ICONOS`) en `app.py`;
+`datos.py`; colores (`COLOR_PRINCIPAL`, `TINTA`, `AMARILLO`, `FONDO`, y uno por
+categoría en `COLORES`), íconos (`ICONOS`) y toda la apariencia (`ESTILOS`, que
+se adapta sola a celular y computador) en `app.py`;
 ciudad del mapa y del buscador (`NOMBRE_ZONA`, `CENTRO`, `ZONA`) en `lugares.py`.
 
 ## Sobre el buscador de lugares
