@@ -147,6 +147,11 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
 1. Toca el botón **+** y completa el aviso: título, categoría, lugar, fecha,
    hora, cuántos son, cuántos necesitan, detalles y si dura **24 o 48 horas**.
    Quien publica **no necesita escribir su nombre**.
+   - **Buscar en el mapa (opcional):** escribe el nombre del lugar y la comuna
+     (ej. «El Huerto Providencia») y toca el botón: aparecen lugares reales con
+     su dirección. Al elegir uno se muestra un mapa para confirmar; si el punto
+     no es exacto, se toca el mapa para moverlo. Así «Cómo llegar» lleva
+     directo a ese punto.
 2. El aviso aparece para todos en el tablero. Las páginas abiertas se
    actualizan solas.
 3. Otra persona toca **Unirme**, escribe su nombre y queda anotada. Al
@@ -170,7 +175,9 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
    quitarlo.
 8. Cada aviso tiene su propia página (`/aviso/<número>`) para compartir el
    enlace por WhatsApp. Al publicar se muestra ese enlace.
-   - **📍 Cómo llegar:** abre el lugar en Google Maps (en el celular, en la app).
+   - **📍 Cómo llegar:** abre las indicaciones de Google Maps hasta el lugar
+     (en el celular, en la app). Si el aviso tiene el punto marcado, la página
+     del aviso también muestra un mapa.
    - **💬 Comentarios:** preguntas cortas como "¿se paga la cancha?" (hasta
      200 caracteres, con el filtro de palabras). Cada uno puede borrar los
      suyos; la administración, cualquiera.
@@ -216,8 +223,21 @@ en un archivo local `avisos.db`, aparte de los de internet.
 | `app.py`           | La interfaz: páginas, tarjetas, formularios. Aquí se cambia el diseño. |
 | `datos.py`         | Las reglas (cupos, plazos, validaciones) y la base de datos. |
 | `filtro.py`        | El filtro de palabras inapropiadas y sus listas. |
+| `lugares.py`       | El buscador de lugares (OpenStreetMap: Photon y Nominatim). |
 | `requirements.txt` | Las librerías que instala Render. |
 | `render.yaml`      | Las instrucciones para que Render publique la página gratis. |
 
 Ajustes rápidos: zona horaria (`ZONA_HORARIA`) y categorías (`CATEGORIAS`) en
 `datos.py`; colores (`COLOR_PRINCIPAL`, `FONDO`) e íconos (`ICONOS`) en `app.py`.
+
+## Sobre el buscador de lugares
+
+Usa servicios gratuitos de OpenStreetMap, sin claves: **Photon**
+(photon.komoot.io) y, si falla, **Nominatim** (nominatim.openstreetmap.org).
+Nominatim tiene una política de uso que hay que respetar
+(https://operations.osmfoundation.org/policies/nominatim/): solo búsquedas
+que la persona pide (no autocompletar), máximo 1 por segundo, identificarse y
+dar crédito a OpenStreetMap. `lugares.py` lo cumple: busca solo al tocar el
+botón, espera 1 segundo entre consultas, recuerda las búsquedas repetidas y
+muestra «© OpenStreetMap». Sirve para un uso moderado; con muchísimos
+usuarios habría que usar un servicio propio o de pago.

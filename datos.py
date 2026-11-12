@@ -122,6 +122,12 @@ class Aviso:
     cancelado_por: str | None  # "dueño" o "admin"
     inscritos: tuple[Participante, ...]  # quienes se unieron desde la página
     comentarios: int = 0  # cuántos comentarios visibles tiene
+    lat: float | None = None  # ubicación exacta, si se eligió en el mapa
+    lng: float | None = None
+
+    @property
+    def tiene_ubicacion(self) -> bool:
+        return self.lat is not None and self.lng is not None
 
     @property
     def participantes(self) -> tuple[str, ...]:
@@ -322,6 +328,8 @@ _COLUMNAS_NUEVAS = (
     ("participantes", "persona_id", "TEXT"),
     ("avisos", "cancelado_en", "BIGINT"),
     ("avisos", "cancelado_por", "TEXT"),  # "dueño" o "admin"
+    ("avisos", "lat", "DOUBLE PRECISION"),  # ubicación exacta (opcional)
+    ("avisos", "lng", "DOUBLE PRECISION"),
 )
 _INDICES_NUEVOS = (
     "CREATE INDEX IF NOT EXISTS idx_avisos_creador ON avisos(creador_id)",
@@ -528,6 +536,19 @@ def _sin_groserias(
         )
 
 
+def _validar_ubicacion(lat, lng) -> tuple[float | None, float | None]:
+    """La ubicación es opcional, pero si viene, deben venir las dos coordenadas y ser válidas."""
+    if lat is None and lng is None:
+        return None, None
+    try:
+        lat, lng = float(lat), float(lng)
+    except (TypeError, ValueError):
+        raise ErrorValidacion("La ubicación del mapa no es válida. Vuelve a elegirla.") from None
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        raise ErrorValidacion("La ubicación del mapa no es válida. Vuelve a elegirla.")
+    return round(lat, 6), round(lng, 6)
+
+
 def _fila_a_aviso(fila, inscritos: list[Participante], comentarios: int = 0) -> Aviso:
     # Lo guardado antes del filtro (o con palabras que se agreguen a la lista
     # después) se muestra sin esas palabras.
@@ -549,6 +570,8 @@ def _fila_a_aviso(fila, inscritos: list[Participante], comentarios: int = 0) -> 
         cancelado_por=fila["cancelado_por"],
         inscritos=tuple(inscritos),
         comentarios=comentarios,
+        lat=float(fila["lat"]) if fila["lat"] is not None else None,
+        lng=float(fila["lng"]) if fila["lng"] is not None else None,
     )
 
 
@@ -610,6 +633,8 @@ def crear_aviso(
     descripcion: str = "",
     creador_id: str | None = None,
     creador: str = "",
+    lat: float | None = None,
+    lng: float | None = None,
     ahora: datetime | None = None,
 ) -> Aviso:
     """Valida los datos y publica el aviso. Lanza ErrorValidacion si algo falla."""
@@ -627,6 +652,7 @@ def crear_aviso(
         raise ErrorValidacion("Elige una categoría.")
     _validar_largo(lugar, "Lugar", *LARGO_LUGAR)
     _sin_groserias(lugar, "El lugar", creador_id, registro="Lugar")
+    lat, lng = _validar_ubicacion(lat, lng)
     creador = filtro.quitar(creador)
 
     if inicio_evento.tzinfo is None:
@@ -663,8 +689,8 @@ def crear_aviso(
             """
             INSERT INTO avisos (titulo, categoria, descripcion, lugar, inicio_evento,
                                 personas_actuales, personas_necesarias, creador,
-                                creador_id, duracion_horas, creado_en, expira_en)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                creador_id, duracion_horas, creado_en, expira_en, lat, lng)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 titulo,
@@ -679,6 +705,8 @@ def crear_aviso(
                 duracion,
                 _a_ts(ahora),
                 _a_ts(expira_en),
+                lat,
+                lng,
             ),
         )
     _invalidar_cache()

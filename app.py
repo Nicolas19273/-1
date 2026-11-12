@@ -43,6 +43,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 import datos
 import filtro
+import lugares
 
 # Render define estas variables; en tu computador no existen.
 EN_INTERNET = "RENDER" in os.environ or "PORT" in os.environ
@@ -214,9 +215,28 @@ def firma(avisos: list[datos.Aviso], momento: datetime) -> tuple:
     return minuto, tuple((a.id, a.ocupados, a.motivo_cierre(momento), a.comentarios) for a in avisos)
 
 
-def url_mapa(lugar: str) -> str:
-    """Enlace de Google Maps para buscar el lugar (en el celular abre la app)."""
-    return "https://www.google.com/maps/search/?api=1&query=" + quote_plus(lugar)
+def url_mapa(lugar: str, lat: float | None = None, lng: float | None = None) -> str:
+    """Indicaciones de Google Maps hasta el lugar (en el celular abre la app).
+    Si el aviso tiene la ubicación exacta, va directo a ese punto."""
+    destino = f"{lat},{lng}" if lat is not None and lng is not None else lugar
+    return "https://www.google.com/maps/dir/?api=1&destination=" + quote_plus(destino)
+
+
+def url_mapa_de(aviso: datos.Aviso) -> str:
+    return url_mapa(aviso.lugar, aviso.lat, aviso.lng)
+
+
+def mapa_con_marcador(lat: float, lng: float, alto: str = "h-56"):
+    """Mapa (OpenStreetMap) centrado en el punto, con un marcador. None si no se pudo dibujar."""
+    try:
+        mapa = ui.leaflet(center=(lat, lng), zoom=16).classes(f"w-full {alto} rounded-xl")
+        marcador = mapa.marker(latlng=(lat, lng))
+        # por si el mapa se dibuja dentro de algo que recién aparece (un diálogo)
+        ui.timer(0.4, lambda: mapa.run_map_method("invalidateSize"), once=True)
+        return mapa, marcador
+    except Exception as error:  # el mapa es un extra: si falla, el resto sigue
+        print(f"[mapa] no se pudo dibujar: {error}", flush=True)
+        return None
 
 
 def texto_hace(momento: datetime, referencia: datetime) -> str:
@@ -448,7 +468,7 @@ def tarjeta_aviso(
         # Cómo llegar · comentarios · denunciar
         if not aviso.cancelado:
             with ui.row().classes("w-full items-center gap-2"):
-                ui.link("📍 Cómo llegar", url_mapa(aviso.lugar), new_tab=True).classes(ESTILO_ACCION)
+                ui.link("📍 Cómo llegar", url_mapa_de(aviso), new_tab=True).classes(ESTILO_ACCION)
                 if modo != "detalle":
                     ui.link(texto_comentarios(aviso.comentarios), f"/aviso/{aviso.id}").classes(
                         ESTILO_ACCION
@@ -534,7 +554,7 @@ def abrir_dialogo_unirse(
                     f"{actualizado.ocupados} de {actualizado.personas_necesarias} · "
                     f"{texto_faltan(actualizado.cupos_libres)}",
                 )
-                ui.link("📍 Cómo llegar", url_mapa(actualizado.lugar), new_tab=True).classes(
+                ui.link("📍 Cómo llegar", url_mapa_de(actualizado), new_tab=True).classes(
                     ESTILO_ACCION + " self-start mt-1"
                 )
             ui.label("Lo guardamos en tu buzón 📬 para que no se te olvide dónde y cuándo es.").classes(
@@ -772,6 +792,70 @@ def abrir_dialogo_crear(
     ).style("width: 540px; max-width: 94vw"):
         cuerpo = ui.column().classes("w-full p-6 gap-4")
 
+    ubicacion: dict = {"lat": None, "lng": None}
+
+    async def buscar_lugar() -> None:
+        boton_buscar.props("loading")
+        try:
+            encontrados = await asyncio.to_thread(lugares.buscar, campo_lugar.value)
+        except lugares.ErrorBusqueda as error:
+            ui.notify(str(error), type="warning", position="top")
+            return
+        finally:
+            boton_buscar.props(remove="loading")
+        resultados.clear()
+        with resultados:
+            if not encontrados:
+                ui.label(
+                    "No lo encontramos. Prueba agregando la comuna, o deja el texto tal cual."
+                ).classes("text-sm text-stone-600")
+                return
+            ui.label("Toca el lugar correcto:").classes("text-xs font-semibold text-stone-600")
+            for lugar in encontrados:
+                with ui.row().classes(
+                    "w-full items-start gap-2 no-wrap rounded-xl border border-stone-200 p-2 "
+                    "cursor-pointer hover:bg-stone-50"
+                ).on("click", partial(elegir_lugar, lugar)):
+                    ui.icon("place", size="20px").classes("text-primary mt-0.5 shrink-0")
+                    with ui.column().classes("gap-0"):
+                        ui.label(lugar.nombre).classes("font-semibold text-stone-900 leading-tight")
+                        if lugar.detalle:
+                            ui.label(lugar.detalle).classes("text-xs text-stone-500")
+            ui.label("Datos de lugares © OpenStreetMap").classes("text-[11px] text-stone-400")
+
+    def elegir_lugar(lugar: lugares.Lugar) -> None:
+        campo_lugar.value = lugar.texto
+        resultados.clear()
+        marcar_ubicacion(lugar.lat, lugar.lng)
+
+    def marcar_ubicacion(lat: float, lng: float) -> None:
+        ubicacion.update(lat=lat, lng=lng)
+        estado_ubicacion.text = "📍 Ubicación marcada"
+        caja_mapa.clear()
+        with caja_mapa:
+            ui.label("¿Es aquí? Si no, toca el mapa donde corresponde.").classes(
+                "text-xs font-semibold text-stone-600"
+            )
+            dibujo = mapa_con_marcador(lat, lng)
+            if dibujo:
+                mapa, marcador = dibujo
+
+                def mover(evento) -> None:
+                    nueva_lat = evento.args["latlng"]["lat"]
+                    nueva_lng = evento.args["latlng"]["lng"]
+                    marcador.move(nueva_lat, nueva_lng)
+                    ubicacion.update(lat=nueva_lat, lng=nueva_lng)
+
+                mapa.on("map-click", mover)
+            ui.button("Quitar ubicación", icon="location_off", on_click=quitar_ubicacion).props(
+                "flat rounded no-caps dense color=grey-8"
+            ).classes("self-start")
+
+    def quitar_ubicacion() -> None:
+        ubicacion.update(lat=None, lng=None)
+        estado_ubicacion.text = ""
+        caja_mapa.clear()
+
     def actualizar_resumen() -> None:
         actuales, necesarias = campo_actuales.value, campo_necesarias.value
         if actuales and necesarias and necesarias > actuales:
@@ -793,6 +877,8 @@ def abrir_dialogo_crear(
                 duracion_horas=campo_duracion.value,
                 descripcion=campo_descripcion.value,
                 creador_id=persona_id,
+                lat=ubicacion["lat"],
+                lng=ubicacion["lng"],
             )
         except datos.ErrorValidacion as error:
             ui.notify(str(error), type="negative", position="top")
@@ -848,10 +934,21 @@ def abrir_dialogo_crear(
         ).classes("w-full")
 
         campo_lugar = ui.input(
-            "Lugar", placeholder="Ej: Cancha 3, Parque O'Higgins", validation=SIN_GROSERIAS
+            "Lugar", placeholder="Ej: Cancha Los Leones, Providencia", validation=SIN_GROSERIAS
         ).props(
             f"outlined maxlength={datos.LARGO_LUGAR[1]}"
         ).classes("w-full")
+        with ui.row().classes("w-full items-center gap-2 no-wrap -mt-2"):
+            boton_buscar = ui.button(
+                "Buscar en el mapa", icon="travel_explore", on_click=lambda: buscar_lugar()
+            ).props("flat rounded no-caps dense color=primary")
+            estado_ubicacion = ui.label("").classes("text-xs font-semibold text-primary")
+        ui.label(
+            "Escribe el nombre del lugar y la comuna, y toca «Buscar en el mapa» para marcar el "
+            "punto exacto. Es opcional: si no lo marcas, «Cómo llegar» buscará lo que escribiste."
+        ).classes("text-xs text-stone-500 -mt-2")
+        resultados = ui.column().classes("w-full gap-1")
+        caja_mapa = ui.column().classes("w-full gap-1")
 
         with ui.row().classes("w-full gap-3 no-wrap"):
             campo_fecha = ui.input("Fecha", value=sugerida.strftime("%Y-%m-%d")).props(
@@ -1090,6 +1187,13 @@ def pagina_aviso(aviso_id: int, request: Request) -> None:
         contenido()
 
         aviso_inicial = datos.obtener_aviso(aviso_id)
+        if aviso_inicial is not None and aviso_inicial.tiene_ubicacion and not aviso_inicial.cancelado:
+            with ui.card().classes("w-full rounded-2xl shadow-none border border-stone-200 p-5 gap-3"):
+                ui.label("Ubicación").classes("text-lg font-black text-stone-900")
+                mapa_con_marcador(aviso_inicial.lat, aviso_inicial.lng)
+                ui.link("📍 Cómo llegar", url_mapa_de(aviso_inicial), new_tab=True).classes(
+                    ESTILO_ACCION + " self-start"
+                )
         if aviso_inicial is not None:
             with ui.card().classes("w-full rounded-2xl shadow-none border border-stone-200 p-5 gap-3"):
                 lista_comentarios()
