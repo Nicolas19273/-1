@@ -127,6 +127,12 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
    tablero** para que otra persona lo tome.
 7. Cada aviso tiene su propia página (`/aviso/<número>`) para compartir el
    enlace por WhatsApp. Al publicar se muestra ese enlace.
+8. **Filtro de palabras inapropiadas** (`filtro.py`): en el título, el lugar y
+   los detalles, las groserías, insultos y ofensas se tapan con `****`. En los
+   nombres de quienes se unen no se permiten. Detecta trucos como `w3on`,
+   `p.u.t.a`, `weooon` o `ctm`, y cuida no tachar palabras normales como
+   "película", "Vergara" o "Putaendo". Ningún filtro es perfecto: para agregar
+   o quitar palabras, edita las listas al comienzo de `filtro.py`.
 
 **¿Cómo sabe la página quién es quién, sin cuentas?** A cada navegador le da
 un identificador al azar guardado en una cookie que dura un año. Por eso el
@@ -157,6 +163,7 @@ en un archivo local `avisos.db`, aparte de los de internet.
 |--------------------|-----------|
 | `app.py`           | La interfaz: páginas, tarjetas, formularios. Aquí se cambia el diseño. |
 | `datos.py`         | Las reglas (cupos, plazos, validaciones) y la base de datos. |
+| `filtro.py`        | El filtro de palabras inapropiadas y sus listas. |
 | `requirements.txt` | Las librerías que instala Render. |
 | `render.yaml`      | Las instrucciones para que Render publique la página gratis. |
 

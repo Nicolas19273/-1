@@ -38,6 +38,7 @@ from nicegui import ui
 from starlette.middleware.base import BaseHTTPMiddleware
 
 import datos
+import filtro
 
 # Render define estas variables; en tu computador no existen.
 EN_INTERNET = "RENDER" in os.environ or "PORT" in os.environ
@@ -603,6 +604,12 @@ def abrir_dialogo_crear(
             return
         al_cambiar()
         mostrar_exito(aviso)
+        if any(filtro.contiene(c.value) for c in (campo_titulo, campo_lugar, campo_descripcion)):
+            ui.notify(
+                "Algunas palabras inapropiadas se taparon con ****.",
+                type="warning",
+                position="top",
+            )
 
     def mostrar_exito(aviso: datos.Aviso) -> None:
         enlace = f"{base_url}/aviso/{aviso.id}"

@@ -43,6 +43,8 @@ from pathlib import Path
 from typing import Iterator
 from zoneinfo import ZoneInfo
 
+import filtro  # palabras inapropiadas
+
 # --------------------------------------------------------------------------- #
 # Configuración
 # --------------------------------------------------------------------------- #
@@ -417,17 +419,23 @@ def armar_fecha_hora(fecha: str | None, hora: str | None) -> datetime:
     return momento.replace(tzinfo=ZONA_HORARIA)
 
 
+def _letras(texto: str) -> int:
+    return sum(c.isalpha() for c in texto)
+
+
 def _fila_a_aviso(fila, inscritos: list[Participante]) -> Aviso:
+    # Se pasa el filtro también al leer: así quedan limpios los avisos
+    # guardados antes del filtro y los que tengan palabras agregadas después.
     return Aviso(
         id=int(fila["id"]),
-        titulo=fila["titulo"],
+        titulo=filtro.censurar(fila["titulo"]),
         categoria=fila["categoria"],
-        descripcion=fila["descripcion"],
-        lugar=fila["lugar"],
+        descripcion=filtro.censurar(fila["descripcion"]),
+        lugar=filtro.censurar(fila["lugar"]),
         inicio_evento=_de_ts(fila["inicio_evento"]),
         personas_actuales=int(fila["personas_actuales"]),
         personas_necesarias=int(fila["personas_necesarias"]),
-        creador=fila["creador"] or "",
+        creador=filtro.censurar(fila["creador"] or ""),
         creador_id=fila["creador_id"],
         duracion_horas=int(fila["duracion_horas"]),
         creado_en=_de_ts(fila["creado_en"]),
@@ -447,7 +455,8 @@ def _inscritos_de(con: _Conexion, ids: list[int]) -> dict[int, list[Participante
         ids,
     ).fetchall()
     for fila in filas:
-        resultado[int(fila["aviso_id"])].append(Participante(fila["nombre"], fila["persona_id"]))
+        nombre = filtro.censurar(fila["nombre"])
+        resultado[int(fila["aviso_id"])].append(Participante(nombre, fila["persona_id"]))
     return resultado
 
 
@@ -490,10 +499,19 @@ def crear_aviso(
     descripcion = (descripcion or "").strip()
 
     # Se valida en el mismo orden en que aparecen los campos del formulario.
+    # Las palabras inapropiadas se tapan con ****; si no queda nada real, error.
     _validar_largo(titulo, "Título", *LARGO_TITULO)
+    titulo = filtro.censurar(titulo)
+    if _letras(titulo) < 3:
+        raise ErrorValidacion("Título: escribe un título sin palabras inapropiadas.")
     if categoria not in CATEGORIAS:
         raise ErrorValidacion("Elige una categoría.")
     _validar_largo(lugar, "Lugar", *LARGO_LUGAR)
+    lugar = filtro.censurar(lugar)
+    if _letras(lugar) < 2:
+        raise ErrorValidacion("Lugar: escribe un lugar sin palabras inapropiadas.")
+    descripcion = filtro.censurar(descripcion)
+    creador = filtro.censurar(creador)
 
     if inicio_evento.tzinfo is None:
         inicio_evento = inicio_evento.replace(tzinfo=ZONA_HORARIA)
@@ -683,6 +701,10 @@ def unirse(
     ahora = _ahora(ahora)
     nombre = limpiar(nombre)
     _validar_largo(nombre, "Tu nombre", *LARGO_NOMBRE)
+    if filtro.contiene(nombre):
+        raise ErrorValidacion(
+            "Ese nombre tiene palabras inapropiadas. Usa tu nombre real o un apodo amable."
+        )
 
     with _conexion() as con, con.transaccion():
         fila = con.bloquear_aviso(aviso_id)
