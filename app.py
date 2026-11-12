@@ -109,6 +109,15 @@ RUTA_FAVICON.write_text(LOGO_SVG, encoding="utf-8")
 SIN_GROSERIAS = {"Tiene palabras inapropiadas: cámbialas para poder publicar.": lambda v: not filtro.contiene(v)}
 NOMBRE_SIN_GROSERIAS = {"Ese nombre no está permitido. Usa tu nombre real o un apodo amable.": lambda v: not filtro.contiene(v)}
 
+VALOR_EN_PESOS = {
+    "Solo números, por ejemplo 2000 o 2.000": lambda v: not v or datos.formato_valor_ok(v),
+    f"El máximo es ${datos.VALOR_MAXIMO:,} por persona".replace(",", "."): (
+        lambda v: not v
+        or not datos.formato_valor_ok(v)
+        or int(v.replace(".", "")) <= datos.VALOR_MAXIMO
+    ),
+}
+
 COOKIE_IDENTIDAD = "falta_uno_id"
 _FORMATO_ID = re.compile(r"^[0-9a-f]{32}$")
 
@@ -313,6 +322,17 @@ def dato(icono: str, texto: str) -> None:
         ui.label(texto).classes("text-stone-700 whitespace-pre-line")
 
 
+def datos_clave(aviso: datos.Aviso, momento: datetime) -> None:
+    """Dónde, cuándo, cuánto cuesta y nivel."""
+    with ui.column().classes("gap-1"):
+        dato("place", aviso.lugar)
+        dato("schedule", texto_fecha_evento(aviso.inicio_evento, momento))
+        if aviso.valor is not None:
+            dato("payments", datos.texto_valor(aviso.valor))
+        if aviso.nivel and aviso.nivel != "cualquiera":
+            dato("signal_cellular_alt", f"Nivel: {datos.NIVELES.get(aviso.nivel, aviso.nivel)}")
+
+
 def etiqueta(texto: str, icono: str, rojo: bool = False) -> None:
     colores = "bg-red-100 text-red-900" if rojo else "bg-green-100 text-green-900"
     with ui.row().classes(
@@ -447,10 +467,8 @@ def tarjeta_aviso(
                 "click", lambda: ui.navigate.to(f"/aviso/{aviso.id}")
             )
 
-        # Dónde y cuándo
-        with ui.column().classes("gap-1"):
-            dato("place", aviso.lugar)
-            dato("schedule", texto_fecha_evento(aviso.inicio_evento, momento))
+        # Dónde, cuándo, cuánto y nivel
+        datos_clave(aviso, momento)
 
         if aviso.descripcion:
             descripcion = ui.label(aviso.descripcion).classes("text-stone-600 whitespace-pre-line")
@@ -547,6 +565,8 @@ def abrir_dialogo_unirse(
                 ui.label(actualizado.titulo).classes("text-lg font-bold text-stone-900 leading-snug")
                 dato("place", actualizado.lugar)
                 dato("schedule", texto_fecha_evento(actualizado.inicio_evento, momento))
+                if actualizado.valor is not None:
+                    dato("payments", datos.texto_valor(actualizado.valor))
                 if actualizado.descripcion:
                     dato("notes", actualizado.descripcion)
                 dato(
@@ -589,9 +609,7 @@ def abrir_dialogo_unirse(
     with cuerpo:
         ui.label("Te vas a unir a").classes("text-sm text-stone-500")
         ui.label(aviso.titulo).classes("text-xl font-bold text-stone-900 leading-snug -mt-3")
-        with ui.column().classes("gap-1"):
-            dato("place", aviso.lugar)
-            dato("schedule", texto_fecha_evento(aviso.inicio_evento, ahora()))
+        datos_clave(aviso, ahora())
         ui.label(texto_faltan(aviso.cupos_libres)).classes("font-bold text-primary")
 
         nombre = ui.input(
@@ -856,6 +874,21 @@ def abrir_dialogo_crear(
         estado_ubicacion.text = ""
         caja_mapa.clear()
 
+    def actualizar_valor() -> None:
+        con_costo = campo_cobro.value == "pago"
+        campo_valor.set_visibility(con_costo)
+        # Solo números y puntos: cualquier otra cosa se borra al escribirla.
+        texto = campo_valor.value or ""
+        limpio = "".join(c for c in texto if c in "0123456789.")
+        if limpio != texto:
+            campo_valor.value = limpio
+        vista_valor.set_visibility(con_costo)
+        try:
+            monto = datos.parsear_valor(limpio) if con_costo and limpio else None
+        except datos.ErrorValidacion:
+            monto = None
+        vista_valor.text = f"Se mostrará como: {datos.texto_valor(monto)}" if monto else ""
+
     def actualizar_resumen() -> None:
         actuales, necesarias = campo_actuales.value, campo_necesarias.value
         if actuales and necesarias and necesarias > actuales:
@@ -879,6 +912,8 @@ def abrir_dialogo_crear(
                 creador_id=persona_id,
                 lat=ubicacion["lat"],
                 lng=ubicacion["lng"],
+                valor=0 if campo_cobro.value == "gratis" else campo_valor.value,
+                nivel=campo_nivel.value,
             )
         except datos.ErrorValidacion as error:
             ui.notify(str(error), type="negative", position="top")
@@ -978,6 +1013,27 @@ def abrir_dialogo_crear(
                 on_change=actualizar_resumen,
             ).props("outlined").classes("flex-1")
         resumen = ui.label("").classes("text-sm font-semibold text-primary -mt-2")
+
+        ui.label("¿Cuánto cuesta por persona?").classes("text-sm font-semibold text-stone-700")
+        campo_cobro = ui.toggle(
+            {"gratis": "Gratis ($0)", "pago": "Tiene costo"},
+            value="gratis",
+            on_change=lambda: actualizar_valor(),
+        ).props(
+            "spread no-caps unelevated rounded toggle-color=primary color=grey-3 text-color=grey-9"
+        ).classes("w-full")
+        campo_valor = ui.input(
+            "Valor por persona",
+            placeholder="Ej: 2.000",
+            on_change=lambda: actualizar_valor(),
+            validation=VALOR_EN_PESOS,
+        ).props("outlined prefix=$ suffix=CLP inputmode=numeric maxlength=7").classes("w-full")
+        vista_valor = ui.label("").classes("text-xs text-stone-500 -mt-2")
+        campo_valor.set_visibility(False)
+
+        campo_nivel = ui.select(datos.NIVELES, label="Nivel (opcional)", value="cualquiera").props(
+            "outlined"
+        ).classes("w-full")
 
         campo_descripcion = ui.textarea(
             "Detalles (opcional)",

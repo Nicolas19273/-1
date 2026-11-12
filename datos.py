@@ -39,6 +39,7 @@ Reglas:
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -67,6 +68,14 @@ LARGO_NOMBRE = (2, 40)
 LARGO_TITULO = (3, 80)
 LARGO_LUGAR = (3, 120)
 LARGO_MAX_DESCRIPCION = 500
+VALOR_MAXIMO = 80_000  # tope del valor por persona, en pesos chilenos
+
+NIVELES: dict[str, str] = {
+    "cualquiera": "Cualquier nivel",
+    "principiante": "Principiante",
+    "intermedio": "Intermedio",
+    "avanzado": "Avanzado",
+}
 
 # clave interna -> nombre visible
 CATEGORIAS: dict[str, str] = {
@@ -124,6 +133,8 @@ class Aviso:
     comentarios: int = 0  # cuántos comentarios visibles tiene
     lat: float | None = None  # ubicación exacta, si se eligió en el mapa
     lng: float | None = None
+    valor: int | None = None  # pesos por persona (0 = gratis; None en avisos antiguos)
+    nivel: str | None = None  # clave de NIVELES
 
     @property
     def tiene_ubicacion(self) -> bool:
@@ -330,6 +341,8 @@ _COLUMNAS_NUEVAS = (
     ("avisos", "cancelado_por", "TEXT"),  # "dueño" o "admin"
     ("avisos", "lat", "DOUBLE PRECISION"),  # ubicación exacta (opcional)
     ("avisos", "lng", "DOUBLE PRECISION"),
+    ("avisos", "valor", "INTEGER"),  # pesos por persona: 0 = gratis, NULL = no se indicó
+    ("avisos", "nivel", "TEXT"),
 )
 _INDICES_NUEVOS = (
     "CREATE INDEX IF NOT EXISTS idx_avisos_creador ON avisos(creador_id)",
@@ -536,6 +549,51 @@ def _sin_groserias(
         )
 
 
+_SOLO_DIGITOS = re.compile(r"^[0-9]+$")
+_CON_PUNTOS = re.compile(r"^[0-9]{1,3}(\.[0-9]{3})+$")  # 10.000 · 1.500
+
+
+def formato_valor_ok(texto: str | None) -> bool:
+    """¿Es un monto en pesos bien escrito? (2000 · 2.000 · $ 2.000)"""
+    limpio = (texto or "").replace("$", "").replace(" ", "")
+    return bool(_SOLO_DIGITOS.match(limpio) or _CON_PUNTOS.match(limpio))
+
+
+def parsear_valor(valor: int | str | None) -> int:
+    """
+    Convierte lo escrito en pesos chilenos enteros.
+    Acepta 2000, 2.000 o $2.000. Rechaza decimales, letras y montos sobre el tope.
+    0 significa gratis.
+    """
+    if isinstance(valor, bool):
+        raise ErrorValidacion("El valor debe ser un número en pesos, por ejemplo 2000 o 2.000.")
+    if isinstance(valor, (int, float)):
+        if isinstance(valor, float) and not valor.is_integer():
+            raise ErrorValidacion("El valor debe ser en pesos enteros, sin decimales.")
+        numero = int(valor)
+    else:
+        texto = (valor or "").replace("$", "").replace(" ", "")
+        if not texto:
+            raise ErrorValidacion("Escribe el valor por persona, o elige «Gratis».")
+        if not formato_valor_ok(texto):
+            raise ErrorValidacion("El valor debe ser un número en pesos, por ejemplo 2000 o 2.000.")
+        numero = int(texto.replace(".", ""))
+    if numero < 0:
+        raise ErrorValidacion("El valor no puede ser negativo.")
+    if numero > VALOR_MAXIMO:
+        raise ErrorValidacion(f"El valor máximo es ${VALOR_MAXIMO:,} por persona.".replace(",", "."))
+    return numero
+
+
+def texto_valor(valor: int | None) -> str:
+    """0 -> 'Gratis' · 2000 -> '$2.000 por persona'"""
+    if valor is None:
+        return ""
+    if valor == 0:
+        return "Gratis"
+    return f"${valor:,} por persona".replace(",", ".")
+
+
 def _validar_ubicacion(lat, lng) -> tuple[float | None, float | None]:
     """La ubicación es opcional, pero si viene, deben venir las dos coordenadas y ser válidas."""
     if lat is None and lng is None:
@@ -572,6 +630,8 @@ def _fila_a_aviso(fila, inscritos: list[Participante], comentarios: int = 0) -> 
         comentarios=comentarios,
         lat=float(fila["lat"]) if fila["lat"] is not None else None,
         lng=float(fila["lng"]) if fila["lng"] is not None else None,
+        valor=int(fila["valor"]) if fila["valor"] is not None else None,
+        nivel=fila["nivel"],
     )
 
 
@@ -635,6 +695,8 @@ def crear_aviso(
     creador: str = "",
     lat: float | None = None,
     lng: float | None = None,
+    valor: int | str | None = None,
+    nivel: str | None = None,
     ahora: datetime | None = None,
 ) -> Aviso:
     """Valida los datos y publica el aviso. Lanza ErrorValidacion si algo falla."""
@@ -674,6 +736,10 @@ def crear_aviso(
             "(si no, ¡no falta nadie!)."
         )
 
+    valor = None if valor is None else parsear_valor(valor)
+    if nivel is not None and nivel not in NIVELES:
+        raise ErrorValidacion("Elige un nivel de la lista.")
+
     if len(descripcion) > LARGO_MAX_DESCRIPCION:
         raise ErrorValidacion(f"Detalles: máximo {LARGO_MAX_DESCRIPCION} caracteres.")
     _sin_groserias(descripcion, "Los detalles", creador_id, plural=True, registro="Detalles")
@@ -689,8 +755,9 @@ def crear_aviso(
             """
             INSERT INTO avisos (titulo, categoria, descripcion, lugar, inicio_evento,
                                 personas_actuales, personas_necesarias, creador,
-                                creador_id, duracion_horas, creado_en, expira_en, lat, lng)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                creador_id, duracion_horas, creado_en, expira_en, lat, lng,
+                                valor, nivel)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 titulo,
@@ -707,6 +774,8 @@ def crear_aviso(
                 _a_ts(expira_en),
                 lat,
                 lng,
+                valor,
+                nivel,
             ),
         )
     _invalidar_cache()
