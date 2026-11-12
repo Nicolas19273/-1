@@ -121,7 +121,11 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
      Se quitan solos 3 horas después de que empieza cada evento.
    - **Mis avisos:** los que publicaste, con quiénes se unieron. Siguen ahí
      **aunque se llenen**, hasta que termina su plazo de 24 o 48 horas.
-6. Cada aviso tiene su propia página (`/aviso/<número>`) para compartir el
+6. Quien se unió puede tocar **Salirme del evento** (en el tablero, en la
+   página del aviso o en su buzón) hasta que empieza el evento. Su cupo queda
+   libre y, si el aviso sigue dentro de su plazo, **vuelve a aparecer en el
+   tablero** para que otra persona lo tome.
+7. Cada aviso tiene su propia página (`/aviso/<número>`) para compartir el
    enlace por WhatsApp. Al publicar se muestra ese enlace.
 
 **¿Cómo sabe la página quién es quién, sin cuentas?** A cada navegador le da

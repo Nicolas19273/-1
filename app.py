@@ -20,13 +20,16 @@ Páginas:
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import re
+import tempfile
 import urllib.request
 import uuid
 from collections import Counter
 from datetime import datetime, timedelta
 from functools import partial
+from pathlib import Path
 from typing import Callable
 
 from fastapi import Request
@@ -66,9 +69,29 @@ MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "
 
 CIERRES = {
     datos.COMPLETO: ("groups", "¡Grupo completo!", "Ya están todos. Este aviso no recibe más gente."),
-    datos.INICIADO: ("sports", "El evento ya comenzó", "El aviso se cerró a la hora del evento."),
+    datos.INICIADO: ("event_busy", "El evento ya comenzó", "El aviso se cerró a la hora del evento."),
     datos.VENCIDO: ("timer_off", "Aviso cerrado", "Se cumplió el plazo de {horas} horas."),
 }
+
+# Logo: dos personas y un «+1» amarillo (el que falta). Dibujado como SVG
+# dentro de Python; se usa en la pestaña del navegador y en el encabezado.
+LOGO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<defs><linearGradient id="fondo" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#145a38"/><stop offset="1" stop-color="#28a862"/>
+</linearGradient></defs>
+<rect width="64" height="64" rx="16" fill="url(#fondo)"/>
+<g fill="#ffffff">
+<circle cx="15" cy="24.5" r="6.5"/><path d="M6.7 49a8.3 8.3 0 0 1 16.6 0z"/>
+<circle cx="32.5" cy="24.5" r="6.5"/><path d="M24.2 49a8.3 8.3 0 0 1 16.6 0z"/>
+</g>
+<circle cx="50" cy="36" r="11.5" fill="#ffd23f" stroke="#ffffff" stroke-opacity=".35" stroke-width="2.5"/>
+<path d="M50 30.5v11M44.5 36h11" stroke="#0f3d26" stroke-width="3.4" stroke-linecap="round"/>
+</svg>"""
+LOGO_URL = "data:image/svg+xml;base64," + base64.b64encode(LOGO_SVG.encode()).decode()
+
+# Para la pestaña del navegador NiceGUI pide un archivo: lo escribimos al iniciar.
+RUTA_FAVICON = Path(tempfile.gettempdir()) / "falta_uno_logo.svg"
+RUTA_FAVICON.write_text(LOGO_SVG, encoding="utf-8")
 
 
 # --------------------------------------------------------------------------- #
@@ -197,14 +220,15 @@ def encabezado(persona_id: str | None) -> Callable[[], None]:
         with ui.row().classes("items-center gap-3 no-wrap cursor-pointer").on(
             "click", lambda: ui.navigate.to("/")
         ):
-            ui.label("+1").classes(
-                "w-11 h-11 rounded-full bg-primary text-white text-lg font-black "
-                "flex items-center justify-center shrink-0"
-            )
+            ui.image(LOGO_URL).props("no-spinner no-transition").classes("w-12 h-12 shrink-0")
             with ui.column().classes("gap-0"):
-                ui.label("Falta Uno").classes(
-                    "text-2xl font-black tracking-tight text-stone-900 leading-none"
-                )
+                with ui.row().classes("gap-1.5 no-wrap items-baseline"):
+                    ui.label("Falta").classes(
+                        "text-2xl font-black tracking-tight text-stone-900 leading-none"
+                    )
+                    ui.label("Uno").classes(
+                        "text-2xl font-black tracking-tight text-primary leading-none"
+                    )
                 ui.label("Avisos para completar el grupo").classes("text-sm text-stone-500")
         with ui.button("Buzón", icon="inbox", on_click=lambda: ui.navigate.to("/buzon")).props(
             "unelevated rounded no-caps color=white text-color=grey-9"
@@ -322,11 +346,13 @@ def tarjeta_aviso(
     momento: datetime,
     persona_id: str | None,
     al_unirse: Callable[[int], None],
+    al_salirse: Callable[[int], None],
     modo: str = "tablero",  # "tablero" | "detalle" | "buzon"
 ) -> None:
     abierto = aviso.esta_abierto(momento)
     mio = aviso.es_de(persona_id)
     anotado = aviso.tiene_inscrito(persona_id)
+    puede_salirse = anotado and momento < aviso.inicio_evento
 
     with ui.card().classes("w-full rounded-2xl shadow-none border border-stone-200 p-5 gap-3"):
         # Categoría y, a la derecha, tu rol o la cuenta regresiva
@@ -381,7 +407,12 @@ def tarjeta_aviso(
             ui.label("Ya estás anotado: lo tienes en tu buzón.").classes(
                 "text-sm font-semibold text-primary"
             )
-        elif abierto:
+
+        if puede_salirse:
+            ui.button(
+                "Salirme del evento", icon="logout", on_click=partial(al_salirse, aviso.id)
+            ).props("flat rounded no-caps dense color=red-8").classes("self-start -ml-1")
+        elif not mio and not anotado and abierto and modo != "buzon":
             ui.button("Unirme", icon="person_add", on_click=partial(al_unirse, aviso.id)).props(
                 "unelevated rounded no-caps"
             ).classes("w-full mt-1")
@@ -482,6 +513,55 @@ def abrir_dialogo_unirse(
             )
 
     dialogo.on("hide", dialogo.delete)  # se borra al cerrarse
+    dialogo.open()
+
+
+def abrir_dialogo_salirse(
+    aviso_id: int, capa: ui.element, persona_id: str | None, al_cambiar: Callable[[], None]
+) -> None:
+    aviso = datos.obtener_aviso(aviso_id)
+    if aviso is None or not aviso.tiene_inscrito(persona_id):
+        ui.notify("Ya no estás anotado en este aviso.", type="info", position="top")
+        al_cambiar()
+        return
+
+    def confirmar() -> None:
+        try:
+            actualizado = datos.salirse(aviso_id, persona_id)
+        except datos.ErrorValidacion as error:
+            ui.notify(str(error), type="negative", position="top")
+            dialogo.close()
+            al_cambiar()
+            return
+        dialogo.close()
+        if actualizado.esta_abierto(ahora()):
+            mensaje = f"Te saliste de «{actualizado.titulo}». El aviso volvió a abrirse para que otra persona tome tu lugar."
+        else:
+            mensaje = f"Te saliste de «{actualizado.titulo}». Tu cupo quedó libre."
+        ui.notify(mensaje, type="info", position="top", multi_line=True)
+        al_cambiar()
+
+    with capa, ui.dialog() as dialogo, ui.card().classes("rounded-2xl p-6 gap-4").style(
+        "width: 420px; max-width: 94vw"
+    ):
+        ui.icon("logout", size="40px").classes("text-red-700 self-center")
+        ui.label("¿Salirte de este evento?").classes(
+            "text-xl font-black text-stone-900 text-center w-full"
+        )
+        ui.label(aviso.titulo).classes("font-bold text-stone-700 text-center w-full -mt-3")
+        ui.label(
+            "Tu cupo quedará libre. Si el aviso sigue dentro de su plazo, vuelve a aparecer "
+            "en el tablero para que otra persona lo tome. También se quitará de tu buzón."
+        ).classes("text-sm text-stone-600 text-center w-full")
+        with ui.row().classes("w-full gap-2 no-wrap"):
+            ui.button("No, me quedo", on_click=dialogo.close).props(
+                "flat rounded no-caps color=grey-8"
+            ).classes("flex-1")
+            ui.button("Sí, salirme", on_click=confirmar).props(
+                "unelevated rounded no-caps color=red-8"
+            ).classes("flex-1")
+
+    dialogo.on("hide", dialogo.delete)
     dialogo.open()
 
 
@@ -647,6 +727,7 @@ def pagina_inicio(request: Request) -> None:
         ).classes("shrink-0 border border-stone-300 px-3")
 
     al_unirse = partial(abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+    al_salirse = partial(abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
 
     @ui.refreshable
     def lista() -> None:
@@ -673,7 +754,7 @@ def pagina_inicio(request: Request) -> None:
 
         if not visibles:
             with ui.column().classes("w-full items-center text-center py-16 gap-2"):
-                ui.icon("sports_soccer", size="48px").classes("text-stone-300")
+                ui.image(LOGO_URL).props("no-spinner no-transition").classes("w-16 h-16 opacity-80")
                 if elegida:
                     ui.label(f"No hay avisos abiertos de {datos.CATEGORIAS[elegida]}").classes(
                         "text-lg font-bold text-stone-700"
@@ -684,7 +765,7 @@ def pagina_inicio(request: Request) -> None:
             return
 
         for aviso in visibles:
-            tarjeta_aviso(aviso, momento, persona_id, al_unirse)
+            tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse)
 
     def revisar_cambios() -> None:
         momento = ahora()
@@ -716,6 +797,7 @@ def pagina_aviso(aviso_id: int, request: Request) -> None:
         actualizar_contador()
 
     al_unirse = partial(abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+    al_salirse = partial(abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
 
     def leer() -> tuple[datos.Aviso | None, tuple | None]:
         momento = ahora()
@@ -736,7 +818,7 @@ def pagina_aviso(aviso_id: int, request: Request) -> None:
         motivo = aviso.motivo_cierre(momento)
         if motivo:
             aviso_de_cierre(aviso, motivo)
-        tarjeta_aviso(aviso, momento, persona_id, al_unirse, modo="detalle")
+        tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, modo="detalle")
 
     def revisar_cambios() -> None:
         if leer()[1] != estado["firma"]:
@@ -765,6 +847,7 @@ def pagina_buzon(request: Request) -> None:
         actualizar_contador()
 
     al_unirse = partial(abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+    al_salirse = partial(abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
 
     def leer() -> tuple[list[datos.Aviso], list[datos.Aviso], tuple]:
         momento = ahora()
@@ -801,7 +884,7 @@ def pagina_buzon(request: Request) -> None:
                 "event_available",
             )
             for aviso in me_uni:
-                tarjeta_aviso(aviso, momento, persona_id, al_unirse, modo="buzon")
+                tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, modo="buzon")
 
         if organizo:
             seccion(
@@ -810,7 +893,7 @@ def pagina_buzon(request: Request) -> None:
                 "campaign",
             )
             for aviso in organizo:
-                tarjeta_aviso(aviso, momento, persona_id, al_unirse, modo="buzon")
+                tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, modo="buzon")
 
     def revisar_cambios() -> None:
         if leer()[2] != estado["firma"]:
@@ -890,7 +973,7 @@ datos.inicializar()
 if __name__ in {"__main__", "__mp_main__"}:
     ui.run(
         title="Falta Uno",
-        favicon="⚽",
+        favicon=str(RUTA_FAVICON),  # ícono de la pestaña del navegador
         language="es",
         host="0.0.0.0",  # acepta visitas desde fuera del servidor
         port=int(os.environ.get("PORT", 8080)),

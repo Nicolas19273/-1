@@ -26,6 +26,9 @@ Reglas:
     hasta que se cumple su plazo de 24/48 h.
   * En el buzón de quien se unió, el aviso sigue visible hasta unas horas
     después de que empieza el evento, para recordar dónde y cuándo es.
+  * Quien se unió puede salirse antes de que empiece el evento. Su cupo queda
+    libre y, si el aviso sigue dentro de plazo, vuelve a aparecer en el
+    tablero (eso pasa solo: el tablero siempre muestra los avisos con cupo).
 """
 
 from __future__ import annotations
@@ -710,6 +713,36 @@ def unirse(
         con.ejecutar(
             "INSERT INTO participantes (aviso_id, nombre, persona_id, unido_en) VALUES (?, ?, ?, ?)",
             (aviso_id, nombre, persona_id or None, _a_ts(ahora)),
+        )
+    _invalidar_cache()
+
+    actualizado = obtener_aviso(aviso_id)
+    assert actualizado is not None
+    return actualizado
+
+
+def salirse(aviso_id: int, persona_id: str | None, ahora: datetime | None = None) -> Aviso:
+    """
+    Saca a una persona de un aviso al que se había unido y devuelve el aviso
+    actualizado. Se puede hasta que empieza el evento. Si el aviso queda con
+    cupo y dentro de plazo, vuelve a aparecer en el tablero.
+    """
+    ahora = _ahora(ahora)
+    if not persona_id:
+        raise ErrorValidacion("No pudimos reconocer tu navegador. Recarga la página.")
+
+    with _conexion() as con, con.transaccion():
+        fila = con.bloquear_aviso(aviso_id)
+        if fila is None:
+            raise ErrorValidacion("Este aviso no existe.")
+        aviso = _fila_a_aviso(fila, _inscritos_de(con, [aviso_id])[aviso_id])
+        if not aviso.tiene_inscrito(persona_id):
+            raise ErrorValidacion("No estás anotado en este aviso.")
+        if ahora >= aviso.inicio_evento:
+            raise ErrorValidacion("El evento ya empezó: ya no puedes salirte desde aquí.")
+        con.ejecutar(
+            "DELETE FROM participantes WHERE aviso_id = ? AND persona_id = ?",
+            (aviso_id, persona_id),
         )
     _invalidar_cache()
 
