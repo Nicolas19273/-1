@@ -1669,7 +1669,7 @@ def abrir_dialogo_crear(
         # ¿Cuántos son?
         with ui.column().classes("fu-seccion"):
             ui.label("¿Cuántos son?").classes("fu-display text-xl")
-            ui.label("Cuenta a todos, contigo incluido").classes("fu-mano -mt-2")
+            ui.label(f"Cuenta a todos, contigo incluido (máximo {datos.MAX_PERSONAS})").classes("fu-mano -mt-2")
             with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
                 ui.label("Ya somos").classes("font-extrabold")
                 with ui.element("div").classes("fu-paso"):

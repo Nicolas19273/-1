@@ -61,7 +61,7 @@ URL_BD = os.environ.get("DATABASE_URL", "").strip()  # PostgreSQL en internet
 RUTA_BD = Path(__file__).with_name("avisos.db")  # SQLite en tu computador
 
 DURACIONES_PERMITIDAS = (24, 48)
-MAX_PERSONAS = 100
+MAX_PERSONAS = 40  # tope de personas por aviso (contando a quienes ya están)
 HORAS_EN_BUZON_TRAS_INICIO = 3  # el evento sigue en el buzón hasta 3 h después de empezar
 
 LARGO_NOMBRE = (2, 40)
