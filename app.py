@@ -1970,7 +1970,8 @@ def pagina_inicio(request: Request) -> None:
         with ui.column().classes("gap-0"):
             ui.label("¿A quién le falta uno hoy?").classes("fu-display fu-hero")
             ui.label(
-                "Avisos de gente de Osorno que necesita completar su grupo. Elige uno y súmate con tu nombre."
+                "Avisos de eventos de la Universidad de Los Lagos. ¿Falta gente para la pichanga, "
+                "el grupo de estudio o la junta del viernes? Publícalo, o súmate a uno con tu nombre."
             ).classes("fu-portada-texto")
             # En el computador el botón va aquí; en el celular, fijo abajo
             ui.button("Crear aviso", icon="add", on_click=crear).props("unelevated no-caps").classes(
