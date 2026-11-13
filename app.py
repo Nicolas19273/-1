@@ -53,16 +53,16 @@ URL_PUBLICA = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
 # Apariencia
 # --------------------------------------------------------------------------- #
 
-COLOR_PRINCIPAL = "#1F7A4D"  # verde cancha
-TINTA = "#173B2B"  # texto y botones oscuros
-AMARILLO = "#FFC93C"  # el «+1»: el cupo que falta y los botones principales
-FONDO = "#FAF6EF"  # papel cálido
-FUENTE = '"Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+COLOR_PRINCIPAL = "#0E6B3F"  # verde cancha
+TINTA = "#0B1F17"  # texto y botones oscuros
+AMARILLO = "#FFD21F"  # el «+1»: el cupo que falta y los botones principales
+FONDO = "#F3F4EF"  # gris papel
+FUENTE = '"Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
 FUENTES_WEB = (
     '<link rel="preconnect" href="https://fonts.googleapis.com">'
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
     '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
-    'family=Fredoka:wght@500..700&family=Nunito:wght@400..800&family=Caveat:wght@600;700&display=swap">'
+    'family=Archivo:wght@400..900&display=swap">'
 )
 SEGUNDOS_ENTRE_REVISIONES = 3  # cada cuánto se buscan cambios para refrescar
 MAX_CUPOS_DIBUJADOS = 16  # círculos por fila de cupos; el resto se resume
@@ -81,15 +81,15 @@ ICONOS = {
 
 # Cada categoría tiene su color: (fuerte, suave). El fuerte se lee bien con texto blanco.
 COLORES = {
-    "futbol": ("#14713F", "#DDF0E3"),
-    "basquetbol": ("#A8520F", "#FFE6D1"),
+    "futbol": ("#0E6B3F", "#DDF0E3"),
+    "basquetbol": ("#C2520A", "#FFE6D1"),
     "tenis_padel": ("#5A6A0B", "#EEF3C9"),
-    "voleibol": ("#0E6E7E", "#D6EFF3"),
-    "juegos_mesa": ("#5B3BA6", "#E9E1FA"),
+    "voleibol": ("#0B6E80", "#D6EFF3"),
+    "juegos_mesa": ("#5B33B8", "#E9E1FA"),
     "videojuegos": ("#3B45B5", "#E0E3FB"),
-    "estudio": ("#1F4E99", "#DCE9FB"),
-    "salida": ("#A32458", "#FBE0EA"),
-    "otro": ("#4E6157", "#E4EAE6"),
+    "estudio": ("#1D4FA8", "#DCE9FB"),
+    "salida": ("#B3225F", "#FBE0EA"),
+    "otro": ("#4A5A52", "#E4EAE6"),
 }
 
 DIAS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
@@ -102,18 +102,13 @@ CIERRES = {
     datos.VENCIDO: ("timer_off", "Aviso cerrado", "Se cumplió el plazo de {horas} horas."),
 }
 
-# Logo: dos caras sonrientes y un círculo amarillo con «+» (el que falta). Dibujado como SVG
+# Logo: una ficha amarilla con «+1» (el que falta). Dibujado como SVG
 # dentro de Python; se usa en la pestaña del navegador y en el encabezado.
 LOGO_SVG = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-<rect width="64" height="64" rx="20" fill="{COLOR_PRINCIPAL}"/>
-<circle cx="19" cy="23" r="10" fill="#ffffff"/>
-<circle cx="45" cy="23" r="10" fill="#ffffff"/>
-<g fill="{TINTA}"><circle cx="15.6" cy="21.2" r="1.6"/><circle cx="22.4" cy="21.2" r="1.6"/>
-<circle cx="41.6" cy="21.2" r="1.6"/><circle cx="48.4" cy="21.2" r="1.6"/></g>
-<g fill="none" stroke="{TINTA}" stroke-width="2.1" stroke-linecap="round">
-<path d="M15 25.8q4 3.6 8 0"/><path d="M41 25.8q4 3.6 8 0"/></g>
-<circle cx="32" cy="45" r="11" fill="{AMARILLO}"/>
-<path d="M32 39.6v10.8M26.6 45h10.8" stroke="{TINTA}" stroke-width="3.4" stroke-linecap="round"/>
+<rect x="3" y="7" width="58" height="55" rx="15" fill="{TINTA}"/>
+<rect x="3" y="3" width="58" height="55" rx="15" fill="{AMARILLO}" stroke="{TINTA}" stroke-width="4"/>
+<g fill="none" stroke="{TINTA}" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round">
+<path d="M13 31h17M21.5 22.500v17"/><path d="M38 25l8.500-5.500v22"/></g>
 </svg>"""
 LOGO_URL = "data:image/svg+xml;base64," + base64.b64encode(LOGO_SVG.encode()).decode()
 
@@ -261,34 +256,122 @@ body { -webkit-font-smoothing: antialiased; }
 }
 :focus-visible { outline: 3px solid rgba(20, 113, 63, .55); outline-offset: 2px; }
 
-/* ---- Capa «humana»: papel cálido, letras redondas, notas a mano y caras en los cupos ---- */
-:root { --tinta: #173B2B; --verde: #1F7A4D; --niebla: #FAF6EF; --suave: #F2F3E8; --amarillo: #FFC93C; --gris: #56695E; --linea: #DCD9C7; }
-.fu-display { font-family: "Fredoka", "Nunito", system-ui, sans-serif; letter-spacing: -0.005em; }
-.fu-hero { font-weight: 600; line-height: 1.05; letter-spacing: -0.01em; }
-.fu-hero::after { content: ""; display: block; width: min(230px, 62%); height: 14px; margin-top: 8px; background: var(--amarillo); -webkit-mask: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NiIgaGVpZ2h0PSIxNCIgdmlld0JveD0iMCAwIDQ2IDE0Ij48cGF0aCBkPSJNMCA5IFEgMTEuNTAwIDAgMjMgNyBUIDQ2IDUiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzAwMCIgc3Ryb2tlLXdpZHRoPSI0IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48L3N2Zz4=') left center / auto 100% repeat-x; mask: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NiIgaGVpZ2h0PSIxNCIgdmlld0JveD0iMCAwIDQ2IDE0Ij48cGF0aCBkPSJNMCA5IFEgMTEuNTAwIDAgMjMgNyBUIDQ2IDUiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzAwMCIgc3Ryb2tlLXdpZHRoPSI0IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48L3N2Zz4=') left center / auto 100% repeat-x; }
-.fu-titulo-tarjeta { font-weight: 600; } .fu-titulo-aviso, .fu-falta { font-weight: 600; letter-spacing: 0; }
-.fu-mano { font-family: "Caveat", "Nunito", cursive; font-weight: 700; font-size: 1.35rem; line-height: 1.1; color: var(--verde); }
+/* ---- Capa «marcador»: contornos firmes, sombras sólidas y números grandes (lo último manda) ---- */
+:root { --tinta: #0B1F17; --verde: #0E6B3F; --verde2: #0A5331; --niebla: #F3F4EF; --suave: #F7F8F3; --amarillo: #FFD21F; --gris: #4A5A52; --linea: #0B1F17; --rojo: #B3261E; --rojo-suave: #fff; }
+.fu-display { font-family: "Archivo", system-ui, sans-serif; font-weight: 900; letter-spacing: -0.035em; }
+.fu-hero { font-weight: 900; letter-spacing: -0.035em; line-height: .95; font-size: clamp(2.8rem, 6.2vw, 4.75rem); max-width: 11ch; }
+.fu-titulo-pagina { font-size: clamp(2.2rem, 5vw, 3.2rem); line-height: 1; }
+.fu-mano { font-weight: 700; font-size: 14px; color: var(--gris); }
 .fu-noche .fu-mano, .fu-previa .fu-mano { color: var(--amarillo); }
-.q-card.fu-card { border-radius: 30px 26px 32px 24px; box-shadow: 0 1px 0 rgba(23, 59, 43, .05), 0 10px 26px rgba(23, 59, 43, .06); }
-.fu-panel, .fu-previa { border-radius: 22px 18px 24px 18px; }
-.fu-seccion { border-radius: 26px 22px 28px 22px; }
-.fu-icono-cat { border-radius: 16px 12px 16px 14px; }
-.fu-cupo-cara { background-image: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyOCAyOCI+PGNpcmNsZSBjeD0iMTAuMiIgY3k9IjEyIiByPSIxLjUiIGZpbGw9IiNmZmYiLz48Y2lyY2xlIGN4PSIxNy44IiBjeT0iMTIiIHI9IjEuNSIgZmlsbD0iI2ZmZiIvPjxwYXRoIGQ9Ik05LjYgMTYuNDAwcTQuNDAwIDMuODAwIDguODAwIDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIxLjkwMCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PC9zdmc+'); background-size: 100% 100%; }
-.fu-paso input { font-family: "Fredoka", sans-serif; font-weight: 600; }
-.fu-opciones .q-btn, .q-btn { font-family: inherit; }
-/* Cómo funciona: tres pasos */
-.fu-como.q-expansion-item { background: #fff; border-radius: 26px 22px 28px 22px; overflow: hidden; box-shadow: 0 1px 0 rgba(23, 59, 43, .05), 0 10px 26px rgba(23, 59, 43, .06); }
-.fu-como .q-item { min-height: 56px; font-weight: 800; font-size: 16px; }
+
+/* Portada verde a todo el ancho */
+.fu-portada { background: var(--verde); color: #fff; border-bottom: 3px solid var(--tinta); margin: -16px -16px 0; width: calc(100% + 32px); }
+.fu-portada-dentro { max-width: 1240px; margin: 0 auto; padding: 16px 16px 18px; }
+.fu-portada .fu-gris { color: #D3E8DB; }
+.fu-portada-fila { display: flex; flex-direction: column; gap: 20px; padding: 22px 0 8px; }
+.fu-portada-texto { font-size: 17px; font-weight: 500; opacity: .93; margin-top: 14px; max-width: 44ch; }
+.fu-cifras { display: flex; gap: 10px; width: 100%; }
+.fu-cifra-caja { flex: 1; background: var(--verde2); border: 2.5px solid var(--tinta); border-radius: 14px; padding: 10px 12px; }
+.fu-cifra { font-weight: 900; font-size: 2.2rem; line-height: 1; letter-spacing: -0.04em; }
+.fu-portada .fu-cifra { color: var(--amarillo); }
+.fu-cifra-texto { font-size: 13px; font-weight: 600; opacity: .92; }
+.fu-solo-pc { display: none !important; }
+@media (min-width: 768px) {
+  .fu-portada-dentro { padding: 18px 40px 26px; }
+  .fu-portada-fila { flex-direction: row; align-items: flex-end; justify-content: space-between; gap: 32px; padding: 26px 0 14px; }
+  .fu-cifras { width: auto; gap: 12px; } .fu-cifra-caja { flex: none; min-width: 124px; padding: 12px 18px; } .fu-cifra { font-size: 2.75rem; }
+  .fu-solo-pc { display: inline-flex !important; }
+}
+
+/* Tarjetas con contorno y sombra sólida */
+.q-card.fu-card { border: 2.5px solid var(--tinta); border-radius: 18px; box-shadow: 0 6px 0 var(--tinta); padding: 16px; overflow: hidden; }
+@media (hover: hover) { .fu-card-viva:hover { transform: translateY(-2px); box-shadow: 0 8px 0 var(--tinta); } }
+.fu-banda { display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 8px; margin: -16px -16px 0; padding: 9px 14px; color: #fff; font-weight: 800; font-size: 14px; border-bottom: 2.5px solid var(--tinta); }
+.fu-cabecera { margin: -16px -16px 0; padding: 16px 16px 22px; border-radius: 0; border-bottom: 2.5px solid var(--tinta); }
+.fu-titulo-tarjeta { font-size: 1.55rem; font-weight: 900; letter-spacing: -0.03em; line-height: 1.05; }
+.fu-titulo-aviso { font-weight: 900; letter-spacing: -0.035em; line-height: 1; }
+.fu-dato { color: #22332B; font-weight: 500; }
+.fu-plazo, .fu-cabecera .fu-plazo { background: rgba(0, 0, 0, .28); color: #fff; border-radius: 8px; padding: 4px 8px; font-size: 12.5px; font-weight: 700; }
+.fu-plazo-pronto, .fu-cabecera .fu-plazo-pronto { background: var(--amarillo); color: var(--tinta); }
+.fu-etiqueta { border-radius: 8px; padding: 3px 8px; border: 2px solid var(--tinta); font-weight: 800; }
+.fu-etiqueta-roja { background: #fff; color: var(--rojo); }
+.fu-panel { background: var(--suave); border: 2px solid var(--tinta); border-radius: 14px; }
+.fu-nota { background: var(--suave); border: 2px solid var(--tinta); border-radius: 12px; }
+.fu-cierre { border: 2.5px solid var(--tinta); border-radius: 16px; box-shadow: 0 5px 0 var(--tinta); }
+.fu-seccion { border: 2.5px solid var(--tinta); border-radius: 16px; box-shadow: 0 5px 0 var(--tinta); }
+.fu-previa { border-radius: 14px; }
+
+/* Marcador: el número que falta, en grande */
+.fu-marcador { display: flex; align-items: stretch; width: 100%; border: 2.5px solid var(--tinta); border-radius: 14px; overflow: hidden; }
+.fu-marcador-numero { flex: none; width: 92px; background: var(--amarillo); border-right: 2.5px solid var(--tinta); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 8px 0; }
+.fu-marcador-listo { background: var(--verde); color: #fff; }
+.fu-marcador-n { font-size: 46px; font-weight: 900; letter-spacing: -0.05em; line-height: .9; }
+.fu-marcador-t { font-size: 14px; font-weight: 800; margin-top: 3px; }
+.fu-marcador-cupos { flex: 1; min-width: 0; padding: 10px 12px; background: var(--suave); display: flex; flex-direction: column; justify-content: center; gap: 7px; }
+.fu-marcador-cuenta { font-size: 12.5px; font-weight: 700; color: var(--gris); }
+.fu-cupos { gap: 4px; }
+.fu-cupo { width: 24px; height: 24px; border-radius: 7px; border: 2px solid var(--tinta); font-size: 9.5px; font-weight: 900; }
+.fu-cupo-libre { border: 2px dashed #8FA096; background: #fff; }
+.fu-cupo-tuyo { font-size: 15px; }
+.fu-cupo-yo { border-radius: 7px; padding: 0 7px; font-size: 11px; box-shadow: none; }
+.fu-cupos-resto { font-weight: 800; }
+
+/* Botones que se hunden al apretarlos */
+.q-btn.fu-cta, .q-btn.fu-oscuro, .q-btn.fu-blanco, .q-btn.fu-suave, .q-btn.fu-peligro {
+  border-radius: 12px; border: 2.5px solid var(--tinta); box-shadow: 0 4px 0 var(--tinta); font-weight: 800; min-height: 46px;
+}
+.q-btn.fu-cta:active, .q-btn.fu-oscuro:active, .q-btn.fu-blanco:active, .q-btn.fu-suave:active, .q-btn.fu-peligro:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--tinta); }
+.q-btn.fu-cta { min-height: 50px; }
+.q-btn.fu-suave { background: #fff !important; }
+.q-btn.fu-peligro { background: #fff !important; color: var(--rojo) !important; }
+.q-btn.fu-grande { min-height: 58px; border-radius: 14px; padding: 0 26px; }
+.q-btn.fu-chip { border-radius: 21px; border: 2px solid var(--tinta); min-height: 42px; font-weight: 800; font-size: 14px; padding: 0 14px; }
+.q-btn.fu-chip-suave { background: #fff !important; }
+.fu-punto { border: 1.5px solid var(--tinta); }
+.fu-insignia.q-badge { border: 2px solid var(--tinta); font-weight: 900; }
+.fu-accion { min-height: 46px; border: 2.5px solid var(--tinta); border-radius: 12px; background: #fff; box-shadow: 0 4px 0 var(--tinta); font-weight: 800; }
+.fu-accion:hover { background: var(--suave); }
+.fu-acciones .fu-accion { flex: 1 1 auto; justify-content: center; }
+.fu-accion:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--tinta); }
+.fu-fab { left: 16px; right: 16px; transform: none; bottom: calc(16px + env(safe-area-inset-bottom)); }
+.fu-fab .q-btn { width: 100%; box-shadow: 0 5px 0 var(--tinta); padding: 0 26px; }
+.fu-fab .q-btn .q-icon { background: none; color: inherit; width: auto; height: auto; margin-right: 8px; font-size: 26px; }
+@media (min-width: 768px) { .fu-fab { display: none; } }
+.fu-avatar { border-radius: 10px; border: 2px solid var(--tinta); background: #fff; }
+.fu-avatar-yo { background: var(--amarillo); }
+.fu-avatar-organiza { background: var(--tinta); color: #fff; }
+.fu-burbuja { background: #F1F3EC; border: 2px solid var(--tinta); border-radius: 4px 14px 14px 14px; }
+
+/* Formularios */
+.q-field--outlined .q-field__control { border-radius: 12px; }
+.q-field--outlined .q-field__control:before { border: 2.5px solid var(--tinta); }
+.q-field--outlined.q-field--rounded .q-field__control { border-radius: 14px; }
+.fu-paso { background: #fff; border: 2.5px solid var(--tinta); border-radius: 14px; }
+.fu-paso .q-btn { border-radius: 9px; background: var(--amarillo); border: 2px solid var(--tinta); font-weight: 900; }
+.fu-paso input { font-family: "Archivo", sans-serif; font-weight: 900; }
+.q-btn-toggle.fu-opciones { background: #fff; border: 2.5px solid var(--tinta); border-radius: 14px; }
+.q-btn-toggle.fu-opciones .q-btn { border-radius: 9px !important; font-weight: 800; }
+.q-dialog .q-card.fu-gris-fondo { background: var(--niebla); }
+@media (max-width: 599px) { .q-dialog .q-card.fu-pantalla { border: none; box-shadow: none; } }
+
+/* Cómo funciona, notas y administración */
+.fu-como.q-expansion-item { background: #fff; border: 2.5px solid var(--tinta); border-radius: 16px; box-shadow: 0 5px 0 var(--tinta); overflow: hidden; }
+.fu-como .q-item { min-height: 54px; font-weight: 800; font-size: 16px; }
 .fu-pasos { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; width: 100%; }
 @media (min-width: 760px) { .fu-pasos { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; } }
-.fu-numero { width: 38px; height: 38px; border-radius: 19px; flex: none; background: var(--amarillo); color: var(--tinta); display: flex; align-items: center; justify-content: center; font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 20px; }
-.fu-guia { background: #FFF3CF; border-radius: 20px 16px 22px 16px; padding: 12px 16px; color: var(--tinta); }
-/* Administración: pestañas como botones */
-.fu-pestanas .q-tab { border-radius: 999px; min-height: 46px; text-transform: none; font-weight: 800; margin-right: 6px; background: #fff; }
+.fu-numero { width: 38px; height: 38px; border-radius: 10px; flex: none; background: var(--amarillo); color: var(--tinta); border: 2px solid var(--tinta); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 20px; }
+.fu-guia { background: #FFF4C2; border: 2px solid var(--tinta); border-radius: 12px; padding: 12px 16px; color: var(--tinta); }
+.fu-pestanas .q-tab { border-radius: 21px; border: 2px solid var(--tinta); min-height: 42px; text-transform: none; font-weight: 800; margin-right: 8px; background: #fff; }
 .fu-pestanas .q-tab--active { background: var(--tinta); color: #fff; }
 .fu-pestanas .q-tab__indicator { display: none; }
-.fu-pestanas .q-tab__label { font-size: 15px; }
-.fu-cifra { font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 2.2rem; line-height: 1; }
+.fu-pestanas .q-tab__label { font-size: 14px; }
+
+/* Mapa con el mismo contorno */
+.fu-card .mapa-fu, .fu-seccion .mapa-fu { border: 2.5px solid var(--tinta) !important; border-radius: 14px !important; }
+.mapa-fu .fu-flotante { border: 2.5px solid var(--tinta); border-radius: 14px; box-shadow: 0 4px 0 var(--tinta); }
+.fu-hoja { border-top: 3px solid var(--tinta); border-radius: 0; box-shadow: none; margin-top: 0; }
+:focus-visible { outline: 3px solid var(--tinta); outline-offset: 3px; }
+.q-dialog .q-card.fu-card { overflow: auto; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>""".replace("ICONO_LLEGAR", _icono_css('<path d="M4 11l16-7-7 16-2-7z"/>')).replace(
         "ICONO_COMENTAR", _icono_css('<path d="M5 5h14v10H10l-5 4z"/>')
@@ -912,6 +995,18 @@ def guia(texto: str) -> None:
         ui.label(texto).classes("text-sm font-semibold")
 
 
+def portada(persona_id: str | None):
+    """
+    Franja verde de arriba, a todo el ancho, con el logo y el buzón.
+    Devuelve (función que actualiza el contador, el interior de la franja por
+    si la página quiere agregar algo más ahí).
+    """
+    with ui.element("div").classes("fu-portada"):
+        with ui.element("div").classes("fu-portada-dentro") as dentro:
+            actualizar = encabezado(persona_id)
+    return actualizar, dentro
+
+
 def volver_al_tablero() -> None:
     ui.button("Ver todos los avisos", icon="arrow_back", on_click=lambda: ui.navigate.to("/")).props(
         "flat no-caps"
@@ -980,12 +1075,19 @@ def fila_cupos(aviso: datos.Aviso, persona_id: str | None, puede_unirse: bool) -
 
 
 def barra_cupos(aviso: datos.Aviso, persona_id: str | None = None, puede_unirse: bool = False) -> None:
-    """Recuadro «Falta 1 persona» con la fila de cupos."""
-    with ui.column().classes("fu-panel w-full gap-3"):
-        with ui.row().classes("w-full items-baseline justify-between gap-2"):
-            ui.label(texto_faltan(aviso.cupos_libres)).classes("fu-display fu-falta")
-            ui.label(f"{aviso.ocupados} de {aviso.personas_necesarias}").classes("fu-gris text-sm")
-        fila_cupos(aviso, persona_id, puede_unirse)
+    """Marcador: a la izquierda cuántos faltan, en grande; a la derecha, los cupos."""
+    libres = aviso.cupos_libres
+    with ui.element("div").classes("fu-marcador"):
+        with ui.element("div").classes("fu-marcador-numero" + ("" if libres else " fu-marcador-listo")):
+            if libres:
+                ui.label(str(libres)).classes("fu-marcador-n")
+                ui.label("falta" if libres == 1 else "faltan").classes("fu-marcador-t")
+            else:
+                ui.icon("check", size="40px")
+                ui.label("completo").classes("fu-marcador-t")
+        with ui.element("div").classes("fu-marcador-cupos"):
+            ui.label(f"{aviso.ocupados} de {aviso.personas_necesarias} ya están").classes("fu-marcador-cuenta")
+            fila_cupos(aviso, persona_id, puede_unirse)
 
 
 def fila_persona(inicial: str | None, nombre: str, detalle: str, destacado: bool = False, icono: str | None = None) -> None:
@@ -1071,7 +1173,7 @@ def tarjeta_aviso(
     anotado = aviso.tiene_inscrito(persona_id)
     puede_salirse = anotado and (aviso.cancelado or momento < aviso.inicio_evento)
     puede_unirse = not mio and not anotado and abierto and modo != "buzon"
-    fuerte, suave = colores_de(aviso.categoria)
+    fuerte, _ = colores_de(aviso.categoria)
     detalle = modo == "detalle"
 
     def estado_arriba() -> None:
@@ -1101,15 +1203,11 @@ def tarjeta_aviso(
                 if aviso.descripcion:
                     ui.label(aviso.descripcion).classes("fu-cabecera-texto whitespace-pre-line")
         else:
-            with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
-                with ui.row().classes("items-center gap-2.5 no-wrap min-w-0"):
-                    with ui.element("div").classes("fu-icono-cat").style(
-                        f"background: {suave}; color: {fuerte}"
-                    ):
-                        ui.icon(ICONOS.get(aviso.categoria, "campaign"), size="22px")
-                    ui.label(aviso.nombre_categoria).classes("text-sm font-semibold ellipsis").style(
-                        f"color: {fuerte}"
-                    )
+            # Franja del color de la categoría
+            with ui.row().classes("fu-banda").style(f"background: {fuerte}"):
+                with ui.row().classes("items-center gap-2 no-wrap min-w-0"):
+                    ui.icon(ICONOS.get(aviso.categoria, "campaign"), size="18px")
+                    ui.label(aviso.nombre_categoria).classes("ellipsis")
                 estado_arriba()
             ui.label(aviso.titulo).classes("fu-display fu-titulo-tarjeta cursor-pointer").on(
                 "click", lambda: ui.navigate.to(f"/aviso/{aviso.id}")
@@ -1786,7 +1884,23 @@ def pagina_inicio(request: Request) -> None:
 
     def refrescar() -> None:
         lista.refresh()
+        cifras.refresh()
         actualizar_contador()
+
+    @ui.refreshable
+    def cifras() -> None:
+        """Marcador de la portada: avisos abiertos, cupos libres y cuántos cierran hoy."""
+        momento = ahora()
+        activos = datos.avisos_activos(momento)
+        hoy = sum(1 for a in activos if a.cierra_en.date() == momento.date())
+        for numero, texto in (
+            (len(activos), "aviso abierto" if len(activos) == 1 else "avisos abiertos"),
+            (sum(a.cupos_libres for a in activos), "cupos libres"),
+            (hoy, "cierra hoy" if hoy == 1 else "cierran hoy"),
+        ):
+            with ui.element("div").classes("fu-cifra-caja"):
+                ui.label(str(numero)).classes("fu-cifra")
+                ui.label(texto).classes("fu-cifra-texto")
 
     def elegir_categoria(clave: str | None) -> None:
         estado["categoria"] = clave
@@ -1811,13 +1925,6 @@ def pagina_inicio(request: Request) -> None:
 
         elegida = estado["categoria"]
         visibles = [a for a in activos if elegida in (None, a.categoria)]
-
-        n = len(activos)
-        ui.label(
-            "Todavía no hay avisos abiertos en Osorno"
-            if n == 0
-            else f"{n} aviso{'s' if n != 1 else ''} abierto{'s' if n != 1 else ''} en Osorno"
-        ).classes("fu-gris text-base -mt-3")
 
         if activos or elegida:
             conteo = Counter(a.categoria for a in activos)
@@ -1852,20 +1959,34 @@ def pagina_inicio(request: Request) -> None:
         momento = ahora()
         if firma(datos.avisos_activos(momento), momento) != estado["firma"]:
             lista.refresh()
+            cifras.refresh()
         actualizar_contador()
 
+    def crear() -> None:
+        abrir_dialogo_crear(capa, base_url, persona_id, refrescar)
+
+    actualizar_contador, dentro = portada(persona_id)
+    with dentro, ui.element("div").classes("fu-portada-fila"):
+        with ui.column().classes("gap-0"):
+            ui.label("¿A quién le falta uno hoy?").classes("fu-display fu-hero")
+            ui.label(
+                "Avisos de gente de Osorno que necesita completar su grupo. Elige uno y súmate con tu nombre."
+            ).classes("fu-portada-texto")
+            # En el computador el botón va aquí; en el celular, fijo abajo
+            ui.button("Crear aviso", icon="add", on_click=crear).props("unelevated no-caps").classes(
+                "fu-cta fu-grande fu-solo-pc mt-5 self-start"
+            )
+        with ui.element("div").classes("fu-cifras"):
+            cifras()
+
     with ui.element("div").classes("fu-contenedor"):
-        actualizar_contador = encabezado(persona_id)
-        ui.label("¿A quién le falta gente hoy?").classes("fu-display fu-hero mt-2")
         como_funciona(abierto=not datos.avisos_activos(ahora()))
         lista()
 
     with ui.element("div").classes("fu-fab"):
-        ui.button(
-            "Crear aviso",
-            icon="add",
-            on_click=lambda: abrir_dialogo_crear(capa, base_url, persona_id, refrescar),
-        ).props("unelevated no-caps").classes("fu-oscuro")
+        ui.button("Crear aviso", icon="add", on_click=crear).props("unelevated no-caps").classes(
+            "fu-cta fu-grande"
+        )
 
     ui.timer(SEGUNDOS_ENTRE_REVISIONES, revisar_cambios)
 
@@ -1958,8 +2079,8 @@ def pagina_aviso(aviso_id: int, request: Request) -> None:
             lista_comentarios.refresh()
         actualizar_contador()
 
+    actualizar_contador, _ = portada(persona_id)
     with ui.element("div").classes("fu-contenedor"):
-        actualizar_contador = encabezado(persona_id)
         volver_al_tablero()
         aviso_inicial = datos.obtener_aviso(aviso_id)
         # En el computador: el aviso a la izquierda; el mapa y los comentarios a la derecha
@@ -2088,10 +2209,10 @@ def pagina_buzon(request: Request) -> None:
             contenido.refresh()
         actualizar_contador()
 
+    actualizar_contador, _ = portada(persona_id)
     with ui.element("div").classes("fu-contenedor"):
-        actualizar_contador = encabezado(persona_id)
         volver_al_tablero()
-        ui.label("Mi buzón").classes("fu-display fu-hero")
+        ui.label("Mi buzón").classes("fu-display fu-titulo-pagina")
         contenido()
         ui.label(
             "Tu buzón se guarda en este navegador. Si abres la página en otro teléfono, "
@@ -2150,11 +2271,11 @@ def pagina_admin(request: Request) -> None:
     ip = getattr(cliente, "host", None) or "desconocida"
     capa = ui.element("div")
 
+    portada(persona_id)
     with ui.element("div").classes("fu-contenedor fu-angosto"):
-        encabezado(persona_id)
         with ui.row().classes("items-center gap-2 no-wrap"):
             ui.icon("admin_panel_settings", size="30px").classes("text-primary")
-            ui.label("Administración").classes("fu-display fu-hero")
+            ui.label("Administración").classes("fu-display fu-titulo-pagina")
 
         if not CLAVE_ADMIN:
             with tarjeta_simple():
