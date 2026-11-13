@@ -415,16 +415,20 @@ CREDITO_CARTO = (
     '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, '
     '© <a href="https://carto.com/attributions">CARTO</a>'
 )
+URL_OSM = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+CREDITO_OSM = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+ZOOM_CON_IMAGEN = 18  # hasta aquí hay imágenes del mapa en ambos estilos
+ZOOM_MAXIMO = 20  # hasta aquí se puede acercar (las imágenes se amplían)
 METROS_MISMO_LUGAR = 80  # si el pin se aleja más que esto del lugar buscado, es otro punto
 
 # Pin fijo al centro del mapa: se mueve el mapa, no el pin (como en las apps de
 # delivery). La punta queda justo en el centro.
 PIN_SVG = (
-    '<svg xmlns="http://www.w3.org/2000/svg" width="44" height="56" viewBox="0 0 44 56">'
-    '<ellipse cx="22" cy="50" rx="7" ry="2.6" fill="#000" fill-opacity=".22"/>'
-    '<path d="M22 3.5C13 3.5 5.7 10.6 5.7 19.4c0 11.7 13.6 25.6 15 27a1.9 1.9 0 0 0 2.6 0c1.4-1.4 '
-    f'15-15.3 15-27C38.3 10.6 31 3.5 22 3.5z" fill="{COLOR_PRINCIPAL}" stroke="#fff" stroke-width="3"/>'
-    '<circle cx="22" cy="19.4" r="6.2" fill="#fff"/></svg>'
+    '<svg xmlns="http://www.w3.org/2000/svg" width="52" height="66" viewBox="0 0 44 56">'
+    f'<path d="M22 3.5C13 3.5 5.7 10.6 5.7 19.4c0 11.7 13.6 25.6 15 27a1.9 1.9 0 0 0 2.6 0c1.4-1.4 '
+    f'15-15.3 15-27C38.3 10.6 31 3.5 22 3.5z" fill="{TINTA}" stroke="#fff" stroke-width="2.6"/>'
+    f'<circle cx="22" cy="19.4" r="7.4" fill="{AMARILLO}"/>'
+    f'<path d="M22 15.6v7.6M18.2 19.4h7.6" stroke="{TINTA}" stroke-width="2.4" stroke-linecap="round"/></svg>'
 )
 PIN_URL = "data:image/svg+xml;base64," + base64.b64encode(PIN_SVG.encode()).decode()
 
@@ -446,9 +450,18 @@ ESTILOS_MAPA = f"""<style>
 }}
 .mapa-fu.mapa-suave .leaflet-tile-pane {{ filter: saturate(.5) brightness(1.05) contrast(.95); }}
 .mapa-fu .pin-centro {{
-  position: absolute; left: 50%; top: 50%; width: 44px; height: 56px; margin: -49px 0 0 -22px;
+  position: absolute; left: 50%; top: 50%; width: 52px; height: 66px; margin: -56px 0 0 -26px;
   pointer-events: none; z-index: 650; background: url("{PIN_URL}") no-repeat center / contain;
+  filter: drop-shadow(0 6px 8px rgba(16, 36, 27, .28));
 }}
+.mapa-fu .pin-centro::after {{
+  content: ""; position: absolute; left: 50%; top: 56px; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border-radius: 50%; border: 2px solid {TINTA}; background: rgba(255, 210, 63, .55); z-index: -1;
+  animation: fu-punto-mapa 1.8s ease-out infinite;
+}}
+@keyframes fu-punto-mapa {{ 0% {{ box-shadow: 0 0 0 0 rgba(16, 36, 27, .35); }} 100% {{ box-shadow: 0 0 0 14px rgba(16, 36, 27, 0); }} }}
+.mapa-fu .fu-flotante {{ background: #fff; border-radius: 22px; box-shadow: 0 6px 18px rgba(16, 36, 27, .18); }}
+.fu-hoja {{ position: relative; z-index: 1200; margin-top: -24px; background: #fff; border-radius: 28px 28px 0 0; box-shadow: 0 -8px 24px rgba(16, 36, 27, .12); }}
 </style>"""
 
 # El mapa ocupa todo su contenedor (sin altura mínima propia: si no, el pin
@@ -478,7 +491,7 @@ def opciones_selector() -> dict:
         "zoomControl": False,  # usamos botones propios, más grandes
         "scrollWheelZoom": True,
         "minZoom": lugares.ZOOM_MINIMO,
-        "maxZoom": 19,
+        "maxZoom": ZOOM_MAXIMO,
         "maxBounds": [[sur, oeste], [norte, este]],
         "maxBoundsViscosity": 1.0,
     }
@@ -495,7 +508,7 @@ def opciones_vista(controles: bool = True) -> dict:
         "boxZoom": False,
         "keyboard": False,
         "minZoom": lugares.ZOOM_MINIMO,
-        "maxZoom": 19,
+        "maxZoom": ZOOM_MAXIMO,
         "zoomControl": controles,
     }
     if controles:
@@ -508,11 +521,19 @@ def opciones_vista(controles: bool = True) -> dict:
 def mapa_base(centro, zoom: int, opciones: dict):
     """Un mapa que llena su contenedor, con el estilo de la página."""
     mapa = ui.leaflet(center=tuple(centro), zoom=zoom, options=opciones).style(ESTILO_LLENAR)
+    # La capa se define siempre aquí. «maxNativeZoom» es hasta dónde existen
+    # imágenes del mapa; más cerca que eso, se amplía la última en vez de
+    # quedar en gris.
+    mapa.clear_layers()
     if CARTO_KEY:
-        mapa.clear_layers()
         mapa.tile_layer(
             url_template=URL_CARTO + CARTO_KEY,
-            options={"maxZoom": 20, "attribution": CREDITO_CARTO},
+            options={"maxNativeZoom": ZOOM_CON_IMAGEN, "maxZoom": ZOOM_MAXIMO, "attribution": CREDITO_CARTO},
+        )
+    else:
+        mapa.tile_layer(
+            url_template=URL_OSM,
+            options={"maxNativeZoom": ZOOM_CON_IMAGEN, "maxZoom": ZOOM_MAXIMO, "attribution": CREDITO_OSM},
         )
     def ajustar_tamano() -> None:  # por si se dibuja dentro de algo que recién aparece (un diálogo)
         mapa.run_map_method("invalidateSize")  # sin esperar respuesta (devuelve el mapa entero)
@@ -579,7 +600,7 @@ def abrir_selector_ubicacion(
 
     def mostrar_resultados(encontrados: list) -> None:
         resultados.clear()
-        with resultados, ui.card().classes("w-full rounded-2xl p-2 gap-1 shadow-lg"):
+        with resultados, ui.card().classes("fu-card w-full max-w-2xl gap-1").style("padding: 10px; box-shadow: 0 10px 28px rgba(16, 36, 27, .2)"):
             with ui.row().classes("w-full items-center justify-between no-wrap pl-2"):
                 ui.label(f"Resultados en {lugares.NOMBRE_ZONA}").classes(
                     "text-xs font-bold tracking-wide text-stone-500"
@@ -596,11 +617,9 @@ def abrir_selector_ubicacion(
                     ).classes("text-sm text-stone-600")
             for lugar in encontrados:
                 with ui.row().classes(
-                    "w-full items-center gap-3 no-wrap rounded-xl px-2 py-2 cursor-pointer hover:bg-green-50"
+                    "w-full items-center gap-3 no-wrap rounded-2xl px-2 py-2 cursor-pointer hover:bg-stone-100"
                 ).on("click", partial(elegir, lugar)):
-                    with ui.element("div").classes(
-                        "w-9 h-9 rounded-full bg-green-50 flex items-center justify-center shrink-0"
-                    ):
+                    with ui.element("div").classes("fu-avatar"):
                         ui.icon(lugar.icono, size="20px").classes("text-primary")
                     with ui.column().classes("gap-0 min-w-0 flex-1"):
                         ui.label(lugar.nombre).classes("font-semibold text-stone-900 leading-tight")
@@ -692,33 +711,31 @@ def abrir_selector_ubicacion(
     with capa, ui.dialog().props(
         "maximized transition-show=slide-up transition-hide=slide-down"
     ) as selector:
-        with ui.element("div").classes("w-full h-full bg-white").style(
-            "display: flex; flex-direction: column; overflow: hidden"
+        with ui.element("div").classes("w-full h-full").style(
+            f"display: flex; flex-direction: column; overflow: hidden; background: {FONDO}; color: {TINTA}"
         ):
             # Arriba: volver, título y buscador
-            with ui.element("div").classes("w-full bg-white px-3 pt-3 pb-3").style(
-                "flex: none; border-bottom: 1px solid #e7e5e4"
-            ):
-                with ui.row().classes("w-full items-center gap-2 no-wrap"):
-                    ui.button(icon="arrow_back", on_click=selector.close).props(
-                        "flat round dense color=grey-9"
+            with ui.element("div").classes("w-full px-3 pt-3 pb-3").style("flex: none"):
+                with ui.row().classes("w-full items-center gap-3 no-wrap"):
+                    ui.button(icon="arrow_back", on_click=selector.close).props("flat round").classes(
+                        "fu-blanco"
                     )
                     with ui.column().classes("gap-0 min-w-0"):
                         ui.label("¿Dónde es el evento?").classes(
-                            "text-base font-bold text-stone-900 leading-tight"
+                            "fu-display text-2xl font-extrabold leading-tight"
                         )
                         ui.label("Mueve el mapa hasta dejar el pin en el lugar").classes(
-                            "text-xs text-stone-500"
+                            "fu-gris text-sm"
                         )
-                with ui.row().classes("w-full items-center gap-2 no-wrap mt-2"):
+                with ui.row().classes("w-full items-center gap-2 no-wrap mt-3 max-w-2xl"):
                     campo = ui.input(
                         placeholder="Cancha, calle, parque…", value=consulta
-                    ).props("outlined dense rounded enterkeyhint=search").classes("flex-1")
+                    ).props("outlined rounded enterkeyhint=search").classes("flex-1")
                     with campo.add_slot("prepend"):
-                        ui.icon("search", size="20px").classes("text-stone-500")
+                        ui.icon("search", size="22px").classes("fu-gris")
                     boton_buscar = ui.button("Buscar", on_click=buscar).props(
-                        "unelevated rounded no-caps color=primary"
-                    )
+                        "unelevated no-caps"
+                    ).classes("fu-oscuro")
                 campo.on("keydown.enter", buscar)  # Enter = buscar (nunca mientras escribe)
 
             # Al medio: el mapa con el pin fijo, resultados y botones flotantes
@@ -734,30 +751,31 @@ def abrir_selector_ubicacion(
                 )
                 resultados.set_visibility(False)
                 with ui.column().classes("absolute gap-2 items-center").style(
-                    "right: 12px; bottom: 28px; z-index: 1050"
+                    "right: 12px; bottom: 52px; z-index: 1050"
                 ):
-                    boton_gps = ui.button(icon="my_location", on_click=ir_a_mi_ubicacion).props(
-                        "round unelevated color=white text-color=primary"
-                    ).classes("shadow-md").tooltip("Mi ubicación")
-                    with ui.column().classes("gap-0 rounded-full bg-white shadow-md overflow-hidden"):
-                        ui.button(icon="add", on_click=acercar).props("flat round color=grey-9")
-                        ui.button(icon="remove", on_click=alejar).props("flat round color=grey-9")
+                    with ui.element("div").classes("fu-flotante"):
+                        boton_gps = ui.button(icon="my_location", on_click=ir_a_mi_ubicacion).props(
+                            "flat round size=lg color=primary"
+                        ).tooltip("Mi ubicación")
+                    with ui.column().classes("fu-flotante gap-0 overflow-hidden"):
+                        ui.button(icon="add", on_click=acercar).props("flat round size=lg color=dark")
+                        ui.button(icon="remove", on_click=alejar).props("flat round size=lg color=dark")
 
             # Abajo: a qué corresponde el punto y confirmar
-            with ui.element("div").classes("w-full bg-white px-4 pt-3").style(
-                "flex: none; border-top: 1px solid #e7e5e4; "
-                "padding-bottom: calc(16px + env(safe-area-inset-bottom))"
-            ):
+            with ui.element("div").classes("fu-hoja w-full px-4 pt-4").style(
+                "flex: none; padding-bottom: calc(16px + env(safe-area-inset-bottom))"
+            ), ui.column().classes("w-full max-w-2xl mx-auto gap-0"):
                 with ui.row().classes("w-full items-center gap-3 no-wrap"):
-                    ui.icon("place", size="22px").classes("text-primary shrink-0")
+                    with ui.element("div").classes("fu-avatar fu-avatar-yo"):
+                        ui.icon("place", size="22px")
                     referencia = ui.label(
                         "Este es el punto que marcaste. Mueve el mapa si hace falta."
                         if hay_punto
                         else "Busca el lugar o mueve el mapa: el evento queda donde apunta el pin."
-                    ).classes("text-sm text-stone-700 leading-snug")
+                    ).classes("font-semibold leading-snug")
                 ui.button("Usar este punto", icon="check", on_click=confirmar).props(
-                    "unelevated rounded no-caps color=primary size=lg"
-                ).classes("w-full mt-3")
+                    "unelevated no-caps"
+                ).classes("fu-cta fu-grande w-full mt-3")
 
     selector.on("hide", selector.delete)  # se borra al cerrarse
     selector.open()
@@ -1401,11 +1419,8 @@ def abrir_dialogo_crear(
                     "w-full items-center gap-3 no-wrap rounded-2xl border-2 border-dashed border-stone-300 "
                     "px-3 py-3 cursor-pointer hover:border-green-800"
                 ).on("click", abrir_selector):
-                    with ui.element("div").classes(
-                        "w-10 h-10 rounded-full bg-white border border-stone-200 "
-                        "flex items-center justify-center shrink-0"
-                    ):
-                        ui.icon("add_location_alt", size="22px").classes("text-primary")
+                    with ui.element("div").classes("fu-avatar fu-avatar-yo"):
+                        ui.icon("add_location_alt", size="22px")
                     with ui.column().classes("gap-0 flex-1 min-w-0"):
                         ui.label("Marcar en el mapa").classes("font-semibold text-stone-900 leading-tight")
                         ui.label("Opcional · así «Cómo llegar» lleva al punto exacto").classes(
@@ -1423,8 +1438,8 @@ def abrir_dialogo_crear(
                     vista["direccion"] = ui.label(ubicacion["direccion"] or "Punto marcado en el mapa").classes(
                         "text-xs text-stone-500 ellipsis"
                     )
-                ui.button("Cambiar", on_click=abrir_selector).props("flat rounded no-caps dense color=primary")
-                ui.button("Quitar", on_click=quitar_ubicacion).props("flat rounded no-caps dense color=grey-8")
+                ui.button("Cambiar", on_click=abrir_selector).props("flat no-caps").classes("fu-suave")
+                ui.button("Quitar", on_click=quitar_ubicacion).props("flat no-caps").classes("fu-peligro")
 
     async def al_elegir_punto(lat: float, lng: float, lugar) -> None:
         ubicacion.update(lat=lat, lng=lng)
