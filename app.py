@@ -53,16 +53,16 @@ URL_PUBLICA = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
 # Apariencia
 # --------------------------------------------------------------------------- #
 
-COLOR_PRINCIPAL = "#14713F"  # verde cancha
-TINTA = "#10241B"  # texto y botones oscuros
-AMARILLO = "#FFD23F"  # el «+1»: el cupo que falta y los botones principales
-FONDO = "#EDF2EE"  # gris verdoso muy claro
-FUENTE = '"DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+COLOR_PRINCIPAL = "#1F7A4D"  # verde cancha
+TINTA = "#173B2B"  # texto y botones oscuros
+AMARILLO = "#FFC93C"  # el «+1»: el cupo que falta y los botones principales
+FONDO = "#FAF6EF"  # papel cálido
+FUENTE = '"Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
 FUENTES_WEB = (
     '<link rel="preconnect" href="https://fonts.googleapis.com">'
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
     '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
-    'family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=DM+Sans:wght@400;500;600;700&display=swap">'
+    'family=Fredoka:wght@500..700&family=Nunito:wght@400..800&family=Caveat:wght@600;700&display=swap">'
 )
 SEGUNDOS_ENTRE_REVISIONES = 3  # cada cuánto se buscan cambios para refrescar
 MAX_CUPOS_DIBUJADOS = 16  # círculos por fila de cupos; el resto se resume
@@ -102,16 +102,18 @@ CIERRES = {
     datos.VENCIDO: ("timer_off", "Aviso cerrado", "Se cumplió el plazo de {horas} horas."),
 }
 
-# Logo: dos personas y un «+1» amarillo (el que falta). Dibujado como SVG
+# Logo: dos caras sonrientes y un círculo amarillo con «+» (el que falta). Dibujado como SVG
 # dentro de Python; se usa en la pestaña del navegador y en el encabezado.
 LOGO_SVG = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-<rect width="64" height="64" rx="18" fill="{COLOR_PRINCIPAL}"/>
-<g fill="#ffffff">
-<circle cx="15" cy="24.5" r="6.5"/><path d="M6.7 49a8.3 8.3 0 0 1 16.6 0z"/>
-<circle cx="32.5" cy="24.5" r="6.5"/><path d="M24.2 49a8.3 8.3 0 0 1 16.6 0z"/>
-</g>
-<circle cx="50" cy="36" r="11.5" fill="{AMARILLO}"/>
-<path d="M50 30.5v11M44.5 36h11" stroke="{TINTA}" stroke-width="3.4" stroke-linecap="round"/>
+<rect width="64" height="64" rx="20" fill="{COLOR_PRINCIPAL}"/>
+<circle cx="19" cy="23" r="10" fill="#ffffff"/>
+<circle cx="45" cy="23" r="10" fill="#ffffff"/>
+<g fill="{TINTA}"><circle cx="15.6" cy="21.2" r="1.6"/><circle cx="22.4" cy="21.2" r="1.6"/>
+<circle cx="41.6" cy="21.2" r="1.6"/><circle cx="48.4" cy="21.2" r="1.6"/></g>
+<g fill="none" stroke="{TINTA}" stroke-width="2.1" stroke-linecap="round">
+<path d="M15 25.8q4 3.6 8 0"/><path d="M41 25.8q4 3.6 8 0"/></g>
+<circle cx="32" cy="45" r="11" fill="{AMARILLO}"/>
+<path d="M32 39.6v10.8M26.6 45h10.8" stroke="{TINTA}" stroke-width="3.4" stroke-linecap="round"/>
 </svg>"""
 LOGO_URL = "data:image/svg+xml;base64," + base64.b64encode(LOGO_SVG.encode()).decode()
 
@@ -258,6 +260,35 @@ body { -webkit-font-smoothing: antialiased; }
   .q-dialog .q-card.fu-pantalla { width: 100vw !important; max-width: 100vw !important; height: 100dvh; max-height: 100dvh !important; border-radius: 0; }
 }
 :focus-visible { outline: 3px solid rgba(20, 113, 63, .55); outline-offset: 2px; }
+
+/* ---- Capa «humana»: papel cálido, letras redondas, notas a mano y caras en los cupos ---- */
+:root { --tinta: #173B2B; --verde: #1F7A4D; --niebla: #FAF6EF; --suave: #F2F3E8; --amarillo: #FFC93C; --gris: #56695E; --linea: #DCD9C7; }
+.fu-display { font-family: "Fredoka", "Nunito", system-ui, sans-serif; letter-spacing: -0.005em; }
+.fu-hero { font-weight: 600; line-height: 1.05; letter-spacing: -0.01em; }
+.fu-hero::after { content: ""; display: block; width: min(230px, 62%); height: 14px; margin-top: 8px; background: var(--amarillo); -webkit-mask: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NiIgaGVpZ2h0PSIxNCIgdmlld0JveD0iMCAwIDQ2IDE0Ij48cGF0aCBkPSJNMCA5IFEgMTEuNTAwIDAgMjMgNyBUIDQ2IDUiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzAwMCIgc3Ryb2tlLXdpZHRoPSI0IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48L3N2Zz4=') left center / auto 100% repeat-x; mask: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NiIgaGVpZ2h0PSIxNCIgdmlld0JveD0iMCAwIDQ2IDE0Ij48cGF0aCBkPSJNMCA5IFEgMTEuNTAwIDAgMjMgNyBUIDQ2IDUiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzAwMCIgc3Ryb2tlLXdpZHRoPSI0IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48L3N2Zz4=') left center / auto 100% repeat-x; }
+.fu-titulo-tarjeta { font-weight: 600; } .fu-titulo-aviso, .fu-falta { font-weight: 600; letter-spacing: 0; }
+.fu-mano { font-family: "Caveat", "Nunito", cursive; font-weight: 700; font-size: 1.35rem; line-height: 1.1; color: var(--verde); }
+.fu-noche .fu-mano, .fu-previa .fu-mano { color: var(--amarillo); }
+.q-card.fu-card { border-radius: 30px 26px 32px 24px; box-shadow: 0 1px 0 rgba(23, 59, 43, .05), 0 10px 26px rgba(23, 59, 43, .06); }
+.fu-panel, .fu-previa { border-radius: 22px 18px 24px 18px; }
+.fu-seccion { border-radius: 26px 22px 28px 22px; }
+.fu-icono-cat { border-radius: 16px 12px 16px 14px; }
+.fu-cupo-cara { background-image: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyOCAyOCI+PGNpcmNsZSBjeD0iMTAuMiIgY3k9IjEyIiByPSIxLjUiIGZpbGw9IiNmZmYiLz48Y2lyY2xlIGN4PSIxNy44IiBjeT0iMTIiIHI9IjEuNSIgZmlsbD0iI2ZmZiIvPjxwYXRoIGQ9Ik05LjYgMTYuNDAwcTQuNDAwIDMuODAwIDguODAwIDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIxLjkwMCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PC9zdmc+'); background-size: 100% 100%; }
+.fu-paso input { font-family: "Fredoka", sans-serif; font-weight: 600; }
+.fu-opciones .q-btn, .q-btn { font-family: inherit; }
+/* Cómo funciona: tres pasos */
+.fu-como.q-expansion-item { background: #fff; border-radius: 26px 22px 28px 22px; overflow: hidden; box-shadow: 0 1px 0 rgba(23, 59, 43, .05), 0 10px 26px rgba(23, 59, 43, .06); }
+.fu-como .q-item { min-height: 56px; font-weight: 800; font-size: 16px; }
+.fu-pasos { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; width: 100%; }
+@media (min-width: 760px) { .fu-pasos { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; } }
+.fu-numero { width: 38px; height: 38px; border-radius: 19px; flex: none; background: var(--amarillo); color: var(--tinta); display: flex; align-items: center; justify-content: center; font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 20px; }
+.fu-guia { background: #FFF3CF; border-radius: 20px 16px 22px 16px; padding: 12px 16px; color: var(--tinta); }
+/* Administración: pestañas como botones */
+.fu-pestanas .q-tab { border-radius: 999px; min-height: 46px; text-transform: none; font-weight: 800; margin-right: 6px; background: #fff; }
+.fu-pestanas .q-tab--active { background: var(--tinta); color: #fff; }
+.fu-pestanas .q-tab__indicator { display: none; }
+.fu-pestanas .q-tab__label { font-size: 15px; }
+.fu-cifra { font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 2.2rem; line-height: 1; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>""".replace("ICONO_LLEGAR", _icono_css('<path d="M4 11l16-7-7 16-2-7z"/>')).replace(
         "ICONO_COMENTAR", _icono_css('<path d="M5 5h14v10H10l-5 4z"/>')
@@ -855,6 +886,32 @@ def encabezado(persona_id: str | None) -> Callable[[], None]:
     return actualizar
 
 
+PASOS = [
+    ("Publica lo que te falta", "Cuenta qué van a hacer, dónde, a qué hora y cuántas personas faltan."),
+    ("Otros se suman con su nombre", "Sin cuentas ni contraseñas: tocan «Unirme», escriben su nombre y listo."),
+    ("Se completa y se cierra solo", "Cuando ya no falta nadie, el aviso sale del tablero. Queda guardado en tu buzón."),
+]
+
+
+def como_funciona(abierto: bool) -> None:
+    """Explicación en tres pasos; abierta si el tablero está vacío."""
+    with ui.expansion("¿Cómo funciona Falta Uno?", icon="help_outline", value=abierto).classes("fu-como w-full"):
+        with ui.element("div").classes("fu-pasos"):
+            for numero, (titulo, texto) in enumerate(PASOS, start=1):
+                with ui.row().classes("items-start gap-3 no-wrap"):
+                    ui.label(str(numero)).classes("fu-numero")
+                    with ui.column().classes("gap-0.5"):
+                        ui.label(titulo).classes("font-extrabold leading-tight")
+                        ui.label(texto).classes("fu-gris text-sm")
+
+
+def guia(texto: str) -> None:
+    """Nota amarilla que explica para qué sirve lo que viene."""
+    with ui.row().classes("fu-guia w-full items-start gap-3 no-wrap"):
+        ui.icon("lightbulb", size="22px").classes("shrink-0 mt-0.5")
+        ui.label(texto).classes("text-sm font-semibold")
+
+
 def volver_al_tablero() -> None:
     ui.button("Ver todos los avisos", icon="arrow_back", on_click=lambda: ui.navigate.to("/")).props(
         "flat no-caps"
@@ -909,9 +966,9 @@ def fila_cupos(aviso: datos.Aviso, persona_id: str | None, puede_unirse: bool) -
             ui.label(f"{al_inicio} +").classes("fu-cupos-resto")
         for tipo, texto in cupos:
             if tipo == "grupo":
-                ui.element("div").classes("fu-cupo").style(f"background: {fuerte}")
+                ui.element("div").classes("fu-cupo fu-cupo-cara").style(f"background-color: {fuerte}")
             elif tipo == "persona":
-                ui.label(texto).classes("fu-cupo").style(f"background: {fuerte}")
+                ui.label(texto).classes("fu-cupo").style(f"background-color: {fuerte}")
             elif tipo == "yo":
                 ui.label(texto).classes("fu-cupo fu-cupo-yo")
             elif tipo == "siguiente":
@@ -1209,6 +1266,7 @@ def abrir_dialogo_unirse(
         with ui.column().classes("fu-panel w-full gap-3"):
             ui.label(texto_faltan(aviso.cupos_libres)).classes("fu-display fu-falta")
             fila_cupos(aviso, persona_id, True)
+            ui.label("El círculo amarillo es tu lugar").classes("fu-mano")
 
         nombre = ui.input(
             "Tu nombre",
@@ -1501,8 +1559,8 @@ def abrir_dialogo_crear(
             ocupados = min(int(actuales), dibujados - 1)
             with caja_previa:
                 for i in range(dibujados):
-                    ui.element("div").classes("fu-cupo" + ("" if i < ocupados else " fu-cupo-libre")).style(
-                        f"background: {colores_de(campo_categoria.value)[0]}" if i < ocupados else ""
+                    ui.element("div").classes("fu-cupo " + ("fu-cupo-cara" if i < ocupados else "fu-cupo-libre")).style(
+                        f"background-color: {colores_de(campo_categoria.value)[0]}" if i < ocupados else ""
                     )
         else:
             resumen.text = ""
@@ -1598,7 +1656,8 @@ def abrir_dialogo_crear(
 
         # ¿Qué van a hacer?
         with ui.column().classes("fu-seccion"):
-            ui.label("¿Qué van a hacer?").classes("text-base font-bold")
+            ui.label("¿Qué van a hacer?").classes("fu-display text-xl")
+            ui.label("Elige una categoría y ponle un título claro").classes("fu-mano -mt-2")
             caja_categorias = ui.row().classes("w-full gap-2")
             campo_categoria = ui.select(datos.CATEGORIAS, label="Categoría", value="futbol")
             campo_categoria.set_visibility(False)  # se elige con los botones de arriba
@@ -1609,8 +1668,10 @@ def abrir_dialogo_crear(
 
         # ¿Cuántos son?
         with ui.column().classes("fu-seccion"):
+            ui.label("¿Cuántos son?").classes("fu-display text-xl")
+            ui.label("Cuenta a todos, contigo incluido").classes("fu-mano -mt-2")
             with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
-                ui.label("Ya somos").classes("text-base font-bold")
+                ui.label("Ya somos").classes("font-extrabold")
                 with ui.element("div").classes("fu-paso"):
                     ui.button("−", on_click=lambda: paso(campo_actuales, -1, 1, datos.MAX_PERSONAS - 1)).props(
                         "flat aria-label=\"Uno menos\""
@@ -1628,7 +1689,7 @@ def abrir_dialogo_crear(
                         "flat aria-label=\"Uno más\""
                     )
             with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
-                ui.label("Necesitamos en total").classes("text-base font-bold")
+                ui.label("Necesitamos en total").classes("font-extrabold")
                 with ui.element("div").classes("fu-paso"):
                     ui.button("−", on_click=lambda: paso(campo_necesarias, -1, 2, datos.MAX_PERSONAS)).props(
                         "flat aria-label=\"Uno menos\""
@@ -1646,13 +1707,15 @@ def abrir_dialogo_crear(
                         "flat aria-label=\"Uno más\""
                     )
             with ui.column().classes("fu-previa w-full gap-3"):
+                ui.label("Así lo verán en el tablero").classes("fu-mano")
                 resumen = ui.label("").classes("fu-display fu-falta")
                 caja_previa = ui.row().classes("fu-cupos")
             actualizar_resumen()
 
         # ¿Dónde y cuándo?
         with ui.column().classes("fu-seccion"):
-            ui.label("¿Dónde y cuándo?").classes("text-base font-bold")
+            ui.label("¿Dónde y cuándo?").classes("fu-display text-xl")
+            ui.label("Mientras más exacto, más fácil llegar").classes("fu-mano -mt-2")
             campo_lugar = ui.input(
                 "Lugar", placeholder="Ej: Cancha del liceo, Parque Chuyaca", validation=SIN_GROSERIAS
             ).props(
@@ -1670,7 +1733,7 @@ def abrir_dialogo_crear(
 
         # Valor, detalles y duración
         with ui.column().classes("fu-seccion"):
-            ui.label("¿Cuánto cuesta por persona?").classes("text-base font-bold")
+            ui.label("¿Cuánto cuesta por persona?").classes("fu-display text-xl")
             campo_cobro = ui.toggle(
                 {"gratis": "Gratis ($0)", "pago": "Tiene costo"},
                 value="gratis",
@@ -1691,7 +1754,7 @@ def abrir_dialogo_crear(
                 validation=SIN_GROSERIAS,
             ).props(f"outlined autogrow maxlength={datos.LARGO_MAX_DESCRIPCION}").classes("w-full")
 
-            ui.label("¿Cuánto dura el aviso?").classes("text-base font-bold")
+            ui.label("¿Cuánto dura el aviso?").classes("fu-display text-xl")
             campo_duracion = ui.toggle({24: "24 horas", 48: "48 horas"}, value=24).props(OPCIONES).classes(
                 "fu-opciones w-full"
             )
@@ -1794,6 +1857,7 @@ def pagina_inicio(request: Request) -> None:
     with ui.element("div").classes("fu-contenedor"):
         actualizar_contador = encabezado(persona_id)
         ui.label("¿A quién le falta gente hoy?").classes("fu-display fu-hero mt-2")
+        como_funciona(abierto=not datos.avisos_activos(ahora()))
         lista()
 
     with ui.element("div").classes("fu-fab"):
@@ -2086,20 +2150,20 @@ def pagina_admin(request: Request) -> None:
     ip = getattr(cliente, "host", None) or "desconocida"
     capa = ui.element("div")
 
-    with ui.column().classes("w-full max-w-3xl mx-auto px-4 pt-6 pb-16 gap-4"):
+    with ui.element("div").classes("fu-contenedor fu-angosto"):
         encabezado(persona_id)
         with ui.row().classes("items-center gap-2 no-wrap"):
             ui.icon("admin_panel_settings", size="30px").classes("text-primary")
-            ui.label("Administración").classes("text-3xl font-black tracking-tight text-stone-900")
+            ui.label("Administración").classes("fu-display fu-hero")
 
         if not CLAVE_ADMIN:
             with tarjeta_simple():
-                ui.label("El panel está desactivado").classes("text-lg font-bold text-stone-900")
+                ui.label("El panel está desactivado").classes("fu-display text-xl")
                 ui.label(
                     "Para activarlo, en Render entra a tu servicio → Environment → Add Environment "
                     "Variable, crea CLAVE_ADMIN con una clave larga que solo tú conozcas y guarda. "
                     "Render reinicia la página solo."
-                ).classes("text-stone-600")
+                ).classes("fu-gris")
             return
 
         if not datos.es_admin(persona_id):
@@ -2111,7 +2175,7 @@ def pagina_admin(request: Request) -> None:
 
 def _formulario_ingreso(persona_id: str | None, ip: str) -> None:
     with tarjeta_simple():
-        ui.label("Esta sección es solo para quien administra la página.").classes("text-stone-600")
+        ui.label("Esta sección es solo para quien administra la página.").classes("fu-gris")
         clave = ui.input("Clave de administración", password=True, password_toggle_button=True).props(
             "outlined autofocus"
         ).classes("w-full")
@@ -2147,7 +2211,11 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
         ui.navigate.to("/admin")
         return False
 
-    with ui.tabs().classes("w-full") as pestanas:
+    guia(
+        "Desde aquí cuidas la página: revisas las denuncias, decides qué palabras se filtran "
+        "y puedes eliminar cualquier aviso."
+    )
+    with ui.tabs().props("no-caps align=left").classes("fu-pestanas w-full") as pestanas:
         p_resumen = ui.tab("Resumen", icon="insights")
         n_denuncias = len(datos.denuncias_pendientes())
         p_denuncias = ui.tab(f"Denuncias ({n_denuncias})" if n_denuncias else "Denuncias", icon="outlined_flag")
@@ -2177,10 +2245,10 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
                             "rounded-2xl shadow-none border border-stone-200 p-4 gap-1"
                         ).style("flex: 1 1 150px; min-width: 150px"):
                             ui.icon(icono, size="22px").classes("text-primary")
-                            ui.label(str(valor)).classes("text-3xl font-black text-stone-900 leading-none")
-                            ui.label(titulo).classes("text-xs text-stone-500")
+                            ui.label(str(valor)).classes("fu-cifra")
+                            ui.label(titulo).classes("text-xs fu-gris")
                 ui.label(f"Avisos publicados desde el comienzo: {c['avisos_total']}").classes(
-                    "text-sm text-stone-500"
+                    "text-sm fu-gris"
                 )
 
             cifras()
@@ -2215,7 +2283,7 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
             ui.label(
                 f"Con {datos.UMBRAL_DENUNCIAS} denuncias de personas distintas, un aviso se oculta "
                 "del tablero hasta que lo revises."
-            ).classes("text-sm text-stone-500")
+            ).classes("text-sm fu-gris")
 
             def tras_moderar() -> None:
                 lista_denuncias.refresh()
@@ -2234,12 +2302,12 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
                 momento = ahora()
                 pendientes = datos.denuncias_pendientes()
                 if not pendientes:
-                    ui.label("No hay denuncias por revisar.").classes("text-stone-500")
+                    ui.label("No hay denuncias por revisar.").classes("fu-gris")
                 for aviso, denuncias in pendientes:
                     with tarjeta_simple():
                         with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
                             ui.label(aviso.titulo).classes(
-                                "text-lg font-bold text-stone-900 leading-snug cursor-pointer hover:underline"
+                                "fu-display text-xl leading-snug cursor-pointer hover:underline"
                             ).on("click", partial(ui.navigate.to, f"/aviso/{aviso.id}"))
                             n = len(denuncias)
                             etiqueta(f"{n} denuncia{'s' if n != 1 else ''}", "outlined_flag", rojo=True)
@@ -2249,14 +2317,14 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
                             )
                         ui.label(
                             f"{aviso.lugar} · {texto_fecha_evento(aviso.inicio_evento, momento)}"
-                        ).classes("text-sm text-stone-600")
+                        ).classes("text-sm fu-gris")
                         if aviso.descripcion:
-                            ui.label(aviso.descripcion).classes("text-sm text-stone-500 line-clamp-3")
+                            ui.label(aviso.descripcion).classes("text-sm fu-gris line-clamp-3")
                         for motivo_txt, cantidad in Counter(d.nombre_motivo for d in denuncias).most_common():
-                            ui.label(f"• {motivo_txt} ({cantidad})").classes("text-sm text-stone-800")
+                            ui.label(f"• {motivo_txt} ({cantidad})").classes("text-sm ")
                         for d in denuncias:
                             if d.comentario:
-                                ui.label(f"“{d.comentario}”").classes("text-sm italic text-stone-600")
+                                ui.label(f"“{d.comentario}”").classes("text-sm italic fu-gris")
                         with ui.row().classes("gap-2"):
                             if not aviso.cancelado:
                                 ui.button(
@@ -2276,10 +2344,10 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
         # ------------------------------------------------------------ Palabras
         with ui.tab_panel(p_palabras).classes("px-0 gap-4"):
             with tarjeta_simple():
-                ui.label("Agregar palabra o frase al filtro").classes("text-lg font-bold text-stone-900")
+                ui.label("Agregar palabra o frase al filtro").classes("fu-display text-xl")
                 ui.label(
                     "Se aplica al instante en toda la página, sin volver a publicar el código."
-                ).classes("text-sm text-stone-500 -mt-2")
+                ).classes("text-sm fu-gris -mt-2")
                 campo_palabra = ui.input("Palabra o frase", placeholder="Ej: pico").props(
                     f"outlined maxlength={datos.LARGO_MAX_REGLA}"
                 ).classes("w-full")
@@ -2301,7 +2369,7 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
                 ui.label(
                     f"«Cerca» significa hasta {filtro.VENTANA} palabras antes o después. "
                     "Las excepciones siempre ganan. Mayúsculas, tildes y trucos como p1c0 se detectan igual."
-                ).classes("text-xs text-stone-500")
+                ).classes("text-xs fu-gris")
 
                 def agregar() -> None:
                     if not sigo_siendo_admin():
@@ -2333,7 +2401,7 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
                 ).classes("self-end")
 
             with tarjeta_simple():
-                ui.label("Probar el filtro").classes("text-lg font-bold text-stone-900")
+                ui.label("Probar el filtro").classes("fu-display text-xl")
                 prueba = ui.textarea(
                     "Escribe un texto de ejemplo", on_change=lambda: probar()
                 ).props("outlined autogrow").classes("w-full")
@@ -2361,23 +2429,23 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
             @ui.refreshable
             def lista_reglas() -> None:
                 propias = datos.reglas()
-                ui.label(f"Tus reglas ({len(propias)})").classes("text-lg font-black text-stone-900 mt-2")
+                ui.label(f"Tus reglas ({len(propias)})").classes("fu-display text-xl mt-2")
                 if not propias:
-                    ui.label("Todavía no agregas palabras propias.").classes("text-stone-500")
+                    ui.label("Todavía no agregas palabras propias.").classes("fu-gris")
                 for regla in propias:
                     with tarjeta_simple():
                         with ui.row().classes("w-full items-start justify-between no-wrap gap-2"):
                             with ui.column().classes("gap-0.5"):
-                                ui.label(regla.palabra).classes("text-lg font-bold text-stone-900")
+                                ui.label(regla.palabra).classes("fu-display text-xl")
                                 if regla.siempre:
-                                    ui.label("Se filtra siempre").classes("text-sm text-stone-600")
+                                    ui.label("Se filtra siempre").classes("text-sm fu-gris")
                                 else:
                                     ui.label("Se filtra cerca de: " + ", ".join(regla.cerca_de)).classes(
-                                        "text-sm text-stone-600"
+                                        "text-sm fu-gris"
                                     )
                                 if regla.excepto:
                                     ui.label("Nunca en: " + ", ".join(regla.excepto)).classes(
-                                        "text-sm text-stone-500"
+                                        "text-sm fu-gris"
                                     )
                             ui.button(
                                 icon="delete_outline", on_click=partial(borrar_regla, regla.id, regla.palabra)
@@ -2389,7 +2457,7 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
             with ui.expansion(f"Lista base ({len(base)} palabras, se filtran siempre)", icon="list").classes(
                 "w-full"
             ):
-                ui.label(", ".join(base)).classes("text-xs text-stone-500")
+                ui.label(", ".join(base)).classes("text-xs fu-gris")
                 ui.label("La lista base está en filtro.py: para cambiarla hay que editar ese archivo.").classes(
                     "text-xs text-stone-400 mt-2"
                 )
@@ -2408,7 +2476,7 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
             with ui.row().classes("w-full justify-between items-center"):
                 ui.label(
                     f"Lo que el filtro no dejó publicar (se guarda {datos.DIAS_REGISTRO_FILTRADOS} días)."
-                ).classes("text-sm text-stone-500")
+                ).classes("text-sm fu-gris")
                 with ui.row().classes("gap-1"):
                     ui.button(icon="refresh", on_click=lambda: lista_bloqueados.refresh()).props(
                         "flat round color=grey-9"
@@ -2422,15 +2490,15 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
                 momento = ahora()
                 registro = datos.filtrados_recientes(100)
                 if not registro:
-                    ui.label("No hay bloqueos registrados.").classes("text-stone-500")
+                    ui.label("No hay bloqueos registrados.").classes("fu-gris")
                 for bloqueo in registro:
                     with tarjeta_simple():
                         with ui.row().classes("w-full items-center justify-between no-wrap"):
                             etiqueta(bloqueo.campo, "block", rojo=True)
                             ui.label(texto_fecha_evento(bloqueo.momento, momento)).classes(
-                                "text-xs text-stone-500"
+                                "text-xs fu-gris"
                             )
-                        ui.label(bloqueo.texto).classes("text-stone-800 whitespace-pre-line break-words")
+                        ui.label(bloqueo.texto).classes(" whitespace-pre-line break-words")
                         ui.label("Detectó: " + ", ".join(f"«{p}»" for p in bloqueo.palabras)).classes(
                             "text-xs font-semibold text-red-800"
                         )
@@ -2440,7 +2508,7 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
         # ------------------------------------------------------------ Avisos
         with ui.tab_panel(p_avisos).classes("px-0 gap-4"):
             ui.label("Los últimos 60 avisos, abiertos o no. Puedes eliminar cualquiera.").classes(
-                "text-sm text-stone-500"
+                "text-sm fu-gris"
             )
 
             def tras_eliminar() -> None:
@@ -2453,12 +2521,12 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
                 momento = ahora()
                 avisos = datos.todos_los_avisos(60)
                 if not avisos:
-                    ui.label("Todavía no hay avisos.").classes("text-stone-500")
+                    ui.label("Todavía no hay avisos.").classes("fu-gris")
                 for aviso in avisos:
                     with tarjeta_simple():
                         with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
                             ui.label(aviso.titulo).classes(
-                                "text-lg font-bold text-stone-900 leading-snug cursor-pointer hover:underline"
+                                "fu-display text-xl leading-snug cursor-pointer hover:underline"
                             ).on("click", partial(ui.navigate.to, f"/aviso/{aviso.id}"))
                             if aviso.cancelado:
                                 quien = "por admin" if aviso.cancelado_por == "admin" else "por su dueño"
@@ -2469,7 +2537,7 @@ def _panel(persona_id: str | None, capa: ui.element) -> None:
                             f"{aviso.nombre_categoria} · {aviso.lugar} · "
                             f"{texto_fecha_evento(aviso.inicio_evento, momento)} · "
                             f"{aviso.ocupados} de {aviso.personas_necesarias}"
-                        ).classes("text-sm text-stone-600")
+                        ).classes("text-sm fu-gris")
                         if not aviso.cancelado:
                             ui.button(
                                 "Eliminar",
