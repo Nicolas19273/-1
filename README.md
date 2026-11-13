@@ -64,36 +64,37 @@ Se publica **gratis** con dos servicios:
   - `PYTHON_VERSION` = `3.12.11`
 </details>
 
-### Paso 4 — Que la página no se duerma
+### Paso 4 — La página duerme cuando nadie la usa
 
-Render gratis **duerme la página si pasan 15 minutos sin visitas**, y
-despertarla toma cerca de 1 minuto. Para evitarlo hay dos capas:
+Render gratis **duerme la página si pasan 15 minutos sin visitas** y la
+**despierta sola cuando alguien entra**. Ese primer ingreso tarda cerca de
+1 minuto (Render muestra una pantalla de carga); después todo va normal.
+Los avisos no se pierden: están guardados en Neon.
 
-1. **Automática (ya viene en `app.py`):** mientras está despierta, la página
-   se visita sola cada 10 minutos. No tienes que hacer nada.
-2. **Despertador externo (hazlo una vez, 3 minutos):** si por algo Render la
-   duerme igual (un reinicio o mantenimiento), la capa 1 no puede despertarla,
-   porque la página ya está dormida. Para eso:
-   - Crea una cuenta gratis en **cron-job.org**.
-   - Toca **Create cronjob**.
-   - Title: `Falta Uno`
-   - URL: `https://TU-ENLACE.onrender.com/salud` (tu enlace + `/salud`)
-   - Execution schedule: **Every 10 minutes**
-   - Guarda con **Create**.
+Así la página solo gasta horas gratis de Render mientras alguien la usa, y
+queda espacio para otros proyectos en la misma cuenta. Una pestaña abierta
+cuenta como alguien usándola, así que mientras haya una abierta, no se duerme.
 
-   No uses `/robots.txt` como dirección: cuando la página está dormida,
-   Render responde esa ruta por su cuenta y no la despierta.
+**Si tenías un despertador en cron-job.org**, desactívalo: entra a
+cron-job.org → tu cronjob `Falta Uno` → apágalo o bórralo. Si no, la seguirá
+despertando cada 10 minutos.
 
-Para comprobar que funciona: en Render, abre el servicio → **Logs**. Cada 10
-minutos debería aparecer `[despertador] visita a /salud: 200`.
+<details>
+<summary>¿Y si algún día quieres que no se duerma nunca?</summary>
 
-**Importante:** Render regala 750 horas al mes por cuenta, y un mes tiene
-hasta 744. Alcanzan para **una** página despierta todo el mes, así que no
-crees otros servicios gratis en la misma cuenta de Render. Si se acaban las
-horas, Render apaga la página hasta el mes siguiente.
+En Render → servicio `falta-uno` → **Environment** → **Add Environment
+Variable**: Key `DESPERTADOR`, Value `si` → **Save**. La página se visitará
+sola cada 10 minutos (en **Logs** verás `[despertador] visita a /salud: 200`).
+Para que tampoco se quede dormida tras un reinicio de Render, agrega además un
+cronjob en cron-job.org a `https://TU-ENLACE.onrender.com/salud` cada 10
+minutos (no uses `/robots.txt`: Render responde esa ruta sin despertarla).
 
-La dirección `/salud` no consulta la base de datos, así que las visitas del
-despertador tampoco gastan las horas gratis de Neon. Además, la página guarda
+Ojo: Render regala 750 horas al mes por cuenta y un mes tiene hasta 744, así
+que una página despierta todo el mes las ocupa casi todas.
+</details>
+
+La dirección `/salud` no consulta la base de datos, así que si enciendes el
+despertador, sus visitas no gastan las horas gratis de Neon. Además, la página guarda
 los avisos en memoria y solo vuelve a leer la base de datos cuando alguien
 publica o se une.
 

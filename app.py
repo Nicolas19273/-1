@@ -2688,14 +2688,18 @@ def salud() -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Despertador: evita que Render duerma la página
+# Despertador (APAGADO por defecto)
 #
-# Render gratis duerme la página si pasan 15 minutos sin visitas. Mientras
-# está despierta, la propia app se visita cada 10 minutos por su dirección
-# pública. (Si aun así llegara a dormirse, la despierta el despertador
-# externo de cron-job.org: ver README.md.)
+# Render gratis duerme la página si pasan 15 minutos sin visitas y la
+# despierta sola cuando alguien entra (tarda cerca de 1 minuto). Así la
+# página solo gasta horas gratis mientras alguien la usa.
+#
+# Si algún día quieres que no se duerma nunca, crea en Render la variable
+# de entorno DESPERTADOR con el valor «si»: la app se visitará sola cada
+# 10 minutos. Ver README.md, paso 4.
 # --------------------------------------------------------------------------- #
 
+DESPERTADOR_ENCENDIDO = os.environ.get("DESPERTADOR", "").strip().lower() in {"si", "sí", "1", "true"}
 MINUTOS_ENTRE_VISITAS = 10
 _tareas_de_fondo: set[asyncio.Task] = set()
 
@@ -2721,6 +2725,9 @@ async def despertador() -> None:
 
 def iniciar_despertador() -> None:
     if not URL_PUBLICA:  # en tu computador no hace falta
+        return
+    if not DESPERTADOR_ENCENDIDO:
+        print("[despertador] apagado: la página duerme sin visitas y despierta sola al entrar", flush=True)
         return
     tarea = asyncio.get_running_loop().create_task(despertador())
     _tareas_de_fondo.add(tarea)  # guardar la referencia para que no se pierda
