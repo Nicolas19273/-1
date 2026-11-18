@@ -6,10 +6,12 @@ Cómo funciona:
   2. Le llega un código de 6 dígitos (vale 10 minutos, 5 intentos).
   3. La primera vez escribe su nombre: es el que verán los demás al unirse o
      comentar. El correo nunca se muestra.
-  4. El navegador queda recordado por un año. Cada correo puede tener sesión
-     abierta en 2 navegadores como máximo: al entrar desde un tercero se
-     cierra la sesión usada hace más tiempo. Así un mismo correo no lo puede
-     usar un curso entero.
+  4. El correo queda unido a ese navegador por un año: desde ahí entra
+     directo, sin código. Si otra persona intenta entrar con ese correo desde
+     otro navegador, la página le dice que el correo ya está en uso (ni
+     siquiera se envía el código). Para cambiar de navegador, el estudiante
+     cierra sesión en el anterior; si ya no lo tiene, la administración
+     puede liberar el correo desde /admin.
 
 El correo se envía con la API HTTP de Brevo (Render gratis bloquea el envío
 por SMTP). Se configura con dos variables de entorno, nunca en el código:
@@ -58,13 +60,18 @@ class Acceso:
     LARGO_CODIGO = 6
     MINUTOS_CODIGO = 10
     MAX_INTENTOS_CODIGO = 5
-    MAX_DISPOSITIVOS = 2
+    MAX_DISPOSITIVOS = 1  # navegadores con sesión abierta por correo
     DIAS_SESION = 365
     COOKIE_SESION = "falta_uno_id"  # el mismo nombre de antes: nadie pierde lo que tenía
     SEGUNDOS_ENTRE_ENVIOS = 60
     MAX_ENVIOS_POR_HORA = 5  # por correo
     MAX_CORREOS_POR_DIA = 280  # el plan gratis de Brevo permite 300
     MINUTOS_EN_MEMORIA = 5  # cuánto se recuerda una sesión sin volver a la base de datos
+
+    MENSAJE_EN_USO = (
+        "Este correo ya está en uso en otro navegador. Si es tuyo, cierra sesión en ese navegador "
+        "(botón con tus iniciales → Cerrar sesión) o pide a la administración que lo libere."
+    )
 
     _CORREO = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?@" + re.escape(DOMINIO_PERMITIDO) + r"$")
 
@@ -112,12 +119,16 @@ class Acceso:
     def _generar_codigo(self) -> str:
         return f"{secrets.randbelow(10 ** self.LARGO_CODIGO):0{self.LARGO_CODIGO}d}"
 
-    def enviar_codigo(self, correo: str | None) -> str | None:
+    def enviar_codigo(self, correo: str | None, dispositivo: str | None = None) -> str | None:
         """
         Envía un código nuevo al correo. Devuelve el código solo en modo de
         prueba (para mostrarlo en pantalla); si se envió por correo, None.
+        Si el correo ya está en uso en otro navegador, no envía nada.
         """
         correo = self._exigir_correo(correo)
+        with datos._conexion() as con:
+            if self._en_uso(con, correo, dispositivo):
+                raise ErrorValidacion(self.MENSAJE_EN_USO)
         momento = time.time()
         with self.__candado:
             self._limpiar_vencidos(momento)
@@ -271,9 +282,10 @@ class Acceso:
                 "SELECT persona_id, nombre FROM estudiantes WHERE correo = ?", (correo,)
             ).fetchone()
             persona_id, nombre = fila["persona_id"], fila["nombre"]
+            if self._en_uso(con, correo, dispositivo):  # otro navegador entró mientras tanto
+                raise ErrorValidacion(self.MENSAJE_EN_USO)
             self._traspasar_datos(con, dispositivo, persona_id)
             con.ejecutar("DELETE FROM sesiones WHERE dispositivo = ?", (dispositivo,))
-            cerradas = self._cerrar_mas_antigua(con, persona_id)
             con.ejecutar(
                 "INSERT INTO sesiones (dispositivo, persona_id, creada_en, usada_en) VALUES (?, ?, ?, ?)",
                 (dispositivo, persona_id, ms, ms),
@@ -281,21 +293,68 @@ class Acceso:
 
         with self.__candado:
             self.__verificados.pop(correo, None)
-            for otro in (*cerradas, dispositivo):
-                self.__sesiones.pop(otro, None)
+            self.__sesiones.pop(dispositivo, None)
         datos._invalidar_cache()
         return persona_id
 
-    def _cerrar_mas_antigua(self, con, persona_id: str) -> list[str]:
-        """Deja lugar para un navegador más: cierra los usados hace más tiempo."""
-        filas = con.ejecutar(
-            "SELECT dispositivo FROM sesiones WHERE persona_id = ? ORDER BY usada_en DESC, creada_en DESC",
-            (persona_id,),
-        ).fetchall()
-        sobran = [f["dispositivo"] for f in filas[self.MAX_DISPOSITIVOS - 1 :]]
-        for dispositivo in sobran:
-            con.ejecutar("DELETE FROM sesiones WHERE dispositivo = ?", (dispositivo,))
-        return sobran
+    def _limite_sesiones_ms(self) -> int:
+        """Las sesiones creadas antes de esto ya cumplieron un año."""
+        return int(time.time() * 1000) - self.DIAS_SESION * 86_400_000
+
+    def _en_uso(self, con, correo: str, dispositivo: str | None) -> bool:
+        """¿El correo ya tiene sesión abierta en otro navegador (y no queda lugar)?"""
+        con.ejecutar(
+            "DELETE FROM sesiones WHERE creada_en < ? AND persona_id IN "
+            "(SELECT persona_id FROM estudiantes WHERE correo = ?)",
+            (self._limite_sesiones_ms(), correo),
+        )
+        fila = con.ejecutar(
+            "SELECT COUNT(*) AS n FROM sesiones s JOIN estudiantes e ON e.persona_id = s.persona_id "
+            "WHERE e.correo = ? AND s.dispositivo <> ?",
+            (correo, dispositivo or ""),
+        ).fetchone()
+        return int(fila["n"]) >= self.MAX_DISPOSITIVOS
+
+    def liberar_correo(self, correo: str | None) -> int:
+        """
+        Para la administración: cierra la sesión de ese correo en todos los
+        navegadores, para que el estudiante pueda entrar desde otro (por
+        ejemplo, si cambió de celular). Devuelve cuántas sesiones cerró.
+        """
+        correo = self._exigir_correo(correo)
+        with datos._conexion() as con:
+            fila = con.ejecutar("SELECT persona_id FROM estudiantes WHERE correo = ?", (correo,)).fetchone()
+            if fila is None:
+                raise ErrorValidacion("Ningún estudiante ha ingresado con ese correo.")
+            dispositivos = [
+                f["dispositivo"]
+                for f in con.ejecutar(
+                    "SELECT dispositivo FROM sesiones WHERE persona_id = ?", (fila["persona_id"],)
+                ).fetchall()
+            ]
+            con.ejecutar("DELETE FROM sesiones WHERE persona_id = ?", (fila["persona_id"],))
+        with self.__candado:
+            for dispositivo in dispositivos:
+                self.__sesiones.pop(dispositivo, None)
+        return len(dispositivos)
+
+    def quitar_sesiones_de_mas(self) -> int:
+        """
+        Al iniciar: si un correo quedó abierto en más navegadores de los
+        permitidos (versiones anteriores dejaban 2), deja solo el usado más
+        recientemente. Devuelve cuántas sesiones cerró.
+        """
+        with datos._conexion() as con:
+            n = int(con.ejecutar("SELECT COUNT(*) AS n FROM sesiones").fetchone()["n"])
+            con.ejecutar(
+                "DELETE FROM sesiones WHERE EXISTS (SELECT 1 FROM sesiones otra "
+                "WHERE otra.persona_id = sesiones.persona_id AND (otra.usada_en > sesiones.usada_en "
+                "OR (otra.usada_en = sesiones.usada_en AND otra.dispositivo > sesiones.dispositivo)))"
+            )
+            quedan = int(con.ejecutar("SELECT COUNT(*) AS n FROM sesiones").fetchone()["n"])
+        with self.__candado:
+            self.__sesiones.clear()
+        return n - quedan
 
     @staticmethod
     def _traspasar_datos(con, dispositivo: str, persona_id: str) -> None:
@@ -325,7 +384,7 @@ class Acceso:
             return guardada[0], guardada[1]
 
         ms = int(momento * 1000)
-        limite = ms - self.DIAS_SESION * 86_400_000
+        limite = self._limite_sesiones_ms()
         with datos._conexion() as con:
             fila = con.ejecutar(
                 "SELECT s.persona_id, s.creada_en, s.usada_en, e.nombre FROM sesiones s "

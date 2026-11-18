@@ -995,7 +995,10 @@ def encabezado(
                     with ui.menu().classes("fu-menu"):
                         with ui.column().classes("gap-0 px-4 pt-3 pb-2"):
                             ui.label(nombre).classes("font-extrabold")
-                            ui.label("Entraste con tu correo institucional").classes("fu-gris text-xs")
+                            ui.label("Tu correo está unido a este navegador.").classes("fu-gris text-xs")
+                            ui.label("Para entrar desde otro, primero cierra sesión aquí.").classes(
+                                "fu-gris text-xs"
+                            )
                         ui.separator()
                         ui.menu_item("Cerrar sesión", on_click=al_salir).classes("font-bold")
 
@@ -1318,9 +1321,9 @@ class Interfaz:
             correo = estado["correo"] if reenviar else campo_correo.value
             estado["ocupado"] = True
             try:
-                codigo = await asyncio.to_thread(self.acceso.enviar_codigo, correo)
+                codigo = await asyncio.to_thread(self.acceso.enviar_codigo, correo, dispositivo)
             except datos.ErrorValidacion as error:
-                ui.notify(str(error), type="negative", position="top")
+                ui.notify(str(error), type="negative", position="top", multi_line=True)
                 return
             finally:
                 estado["ocupado"] = False
@@ -1335,8 +1338,8 @@ class Interfaz:
                     estado["correo"], campo_nombre.value if persona_nueva else "", dispositivo
                 )
             except datos.ErrorValidacion as error:
-                ui.notify(str(error), type="negative", position="top")
-                if "pide uno nuevo" in str(error).lower():
+                ui.notify(str(error), type="negative", position="top", multi_line=True)
+                if "pide uno nuevo" in str(error).lower() or "en uso" in str(error).lower():
                     volver_al_correo()
                 return
             ui.navigate.to(destino)
@@ -1437,9 +1440,14 @@ class Interfaz:
         with ui.element("div").classes("fu-contenedor fu-ingreso"):
             tarjeta()
             ui.label(
-                f"Cada correo puede estar abierto en {self.acceso.MAX_DISPOSITIVOS} navegadores a la vez "
-                "(por ejemplo, tu celular y tu computador). Este navegador te recordará por un año."
+                "Tu correo queda unido a este navegador: la próxima vez entras directo, sin código. "
+                "Nadie más puede usarlo desde otro navegador. Para cambiar de navegador, primero cierra "
+                "sesión en este."
             ).classes("fu-gris text-xs text-center w-full")
+            ui.label(
+                "No ingreses desde una ventana de incógnito: al cerrarla, tu correo quedaría ocupado "
+                "hasta que la administración lo libere."
+            ).classes("fu-gris text-xs text-center w-full font-bold")
 
     # ------------------------------------------------------------------ #
     # Tarjeta de cada aviso
@@ -2478,8 +2486,8 @@ class Interfaz:
             ui.label("Mi buzón").classes("fu-display fu-titulo-pagina")
             contenido()
             ui.label(
-                "Tu buzón va con tu correo institucional: lo ves en cualquier navegador donde entres "
-                f"(hasta {self.acceso.MAX_DISPOSITIVOS} a la vez)."
+                "Tu buzón va con tu correo institucional: si cierras sesión y entras desde otro "
+                "navegador, lo encuentras igual."
             ).classes("fu-gris text-xs text-center w-full mt-6")
 
         ui.timer(self.SEGUNDOS_ENTRE_REVISIONES, revisar_cambios)
@@ -2619,6 +2627,36 @@ class Interfaz:
                 ui.label(
                     "Úsalo si entraste desde un computador ajeno o si cambiaste la clave."
                 ).classes("text-xs text-stone-400 self-end -mt-3")
+
+                with tarjeta_simple():
+                    ui.label("Liberar un correo").classes("fu-display text-xl")
+                    ui.label(
+                        "Cada correo queda unido a un solo navegador. Si un estudiante cambió de celular, "
+                        "borró las cookies o entró en incógnito, aquí cierras su sesión para que pueda "
+                        "volver a entrar (con un código nuevo)."
+                    ).classes("text-sm fu-gris -mt-2")
+                    campo_liberar = ui.input(
+                        "Correo del estudiante", placeholder=f"nombre.apellido@{self.acceso.DOMINIO_PERMITIDO}"
+                    ).props("outlined type=email").classes("w-full")
+
+                    def liberar() -> None:
+                        if not sigo_siendo_admin():
+                            return
+                        try:
+                            n = self.acceso.liberar_correo(campo_liberar.value)
+                        except datos.ErrorValidacion as error:
+                            ui.notify(str(error), type="negative", position="top")
+                            return
+                        if n:
+                            ui.notify("Listo: ese correo ya puede entrar desde otro navegador.", type="positive", position="top")
+                        else:
+                            ui.notify("Ese correo no tenía ninguna sesión abierta.", type="info", position="top")
+                        campo_liberar.value = ""
+
+                    campo_liberar.on("keydown.enter", liberar)
+                    ui.button("Liberar correo", icon="lock_open", on_click=liberar).props(
+                        "unelevated rounded no-caps"
+                    ).classes("self-end")
 
             # ------------------------------------------------------------ Denuncias
             with ui.tab_panel(p_denuncias).classes("px-0 gap-4"):
@@ -2956,6 +2994,7 @@ servidor.on_startup(iniciar_despertador)
 
 
 datos.inicializar()
+acceso.acceso.quitar_sesiones_de_mas()  # un correo, un navegador (antes se permitían 2)
 
 interfaz = Interfaz(
     acceso.acceso,

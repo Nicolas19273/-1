@@ -160,6 +160,8 @@ Qué hay en el panel:
 
 - **Resumen:** avisos abiertos, publicados, personas unidas, bloqueos,
   avisos eliminados, denuncias por revisar y estudiantes registrados.
+  También **Liberar un correo**: cierra la sesión de un estudiante que perdió
+  su navegador, para que vuelva a entrar con un código nuevo.
 - **Denuncias:** los avisos que la gente denunció, con los motivos y
   comentarios. Puedes **eliminar el aviso** o **descartar las denuncias**.
   Con 3 denuncias de personas distintas, el aviso se oculta del tablero
@@ -202,15 +204,20 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
 
 ## Cómo funciona
 
-0. **Ingresar (una sola vez por navegador):** se escribe el correo
-   `@alumnos.ulagos.cl`, llega un código de 6 dígitos (vale 10 minutos, 5
-   intentos) y, solo la primera vez, se escribe el nombre que verán los
-   demás. El correo **nunca se muestra**. No hay contraseña. El navegador
-   queda recordado por un año; arriba a la derecha, el botón con tus
-   iniciales tiene **Cerrar sesión**.
-   - **Un correo, máximo 2 navegadores a la vez** (por ejemplo, celular y
-     computador). Al entrar desde un tercero se cierra la sesión usada hace
-     más tiempo. Así un mismo correo no lo puede usar un curso entero.
+0. **Ingresar (una sola vez):** se escribe el correo `@alumnos.ulagos.cl`,
+   llega un código de 6 dígitos (vale 10 minutos, 5 intentos) y se escribe
+   el nombre que verán los demás. El correo **nunca se muestra**. No hay
+   contraseña. Desde ese navegador se entra directo durante un año, sin
+   volver a pedir código.
+   - **Un correo, un navegador:** si otra persona intenta entrar con un
+     correo que ya está en uso en otro navegador, la página le avisa que
+     **el correo ya está en uso** y no le envía el código.
+   - **Para cambiar de navegador,** se toca el botón con las iniciales
+     (arriba a la derecha) → **Cerrar sesión**, y se entra desde el nuevo.
+   - **Si se perdió el navegador** (celular nuevo, cookies borradas o una
+     ventana de incógnito que se cerró), la administración **libera el
+     correo** desde `/admin` → Resumen → **Liberar un correo**. Por eso la
+     página pide no ingresar en incógnito.
    - Si alguien comparte el enlace de un aviso, quien lo abre ingresa y
      vuelve directo a ese aviso.
 1. Toca el botón **+** y completa el aviso: título, categoría, lugar, fecha,
@@ -272,8 +279,8 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
 
 **¿Cómo sabe la página quién es quién?** A cada navegador le da un
 identificador al azar en una cookie. Al ingresar con el código, ese navegador
-queda unido a la cuenta del estudiante. Por eso el buzón va con el correo: se
-ve igual en el celular y en el computador. Lo que un navegador había hecho
+queda unido a la cuenta del estudiante. Por eso el buzón va con el correo: si
+cierra sesión y entra desde otro navegador, lo encuentra igual. Lo que un navegador había hecho
 antes de que existiera el ingreso (avisos, uniones, comentarios) pasa a la
 cuenta la primera vez que entra.
 
