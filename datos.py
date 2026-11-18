@@ -1,5 +1,5 @@
 """
-datos.py — Reglas y almacenamiento de los avisos de "Falta Uno".
+datos.py — Reglas y almacenamiento de los avisos de "Join In".
 
 Dónde se guardan los datos:
   * En tu computador (sin configurar nada): un archivo SQLite, avisos.db.

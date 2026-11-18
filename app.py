@@ -1,5 +1,5 @@
 """
-app.py — Interfaz web de «Falta Uno», escrita 100 % en Python con NiceGUI.
+app.py — Interfaz web de «Join In», escrita 100 % en Python con NiceGUI.
 
 En internet: Render ejecuta `python app.py` (ver README.md y render.yaml).
 
@@ -948,7 +948,7 @@ def encabezado(persona_id: str | None) -> Callable[[], None]:
         ):
             ui.image(LOGO_URL).props("no-spinner no-transition").classes("w-11 h-11 shrink-0")
             with ui.column().classes("gap-0"):
-                ui.label("Falta Uno").classes("fu-display text-2xl font-extrabold leading-none")
+                ui.label("Join In").classes("fu-display text-2xl font-extrabold leading-none")
                 ui.label("Avisos para completar el grupo").classes("fu-gris text-sm max-sm:hidden")
         with ui.button("Buzón", icon="inbox", on_click=lambda: ui.navigate.to("/buzon")).props(
             "unelevated no-caps"
@@ -978,7 +978,7 @@ PASOS = [
 
 def como_funciona(abierto: bool) -> None:
     """Explicación en tres pasos; abierta si el tablero está vacío."""
-    with ui.expansion("¿Cómo funciona Falta Uno?", icon="help_outline", value=abierto).classes("fu-como w-full"):
+    with ui.expansion("¿Cómo funciona Join In?", icon="help_outline", value=abierto).classes("fu-como w-full"):
         with ui.element("div").classes("fu-pasos"):
             for numero, (titulo, texto) in enumerate(PASOS, start=1):
                 with ui.row().classes("items-start gap-3 no-wrap"):
@@ -1116,7 +1116,7 @@ def lista_quienes(aviso: datos.Aviso, persona_id: str | None) -> None:
                  destacado=aviso.es_de(persona_id))
     for p in aviso.inscritos:
         soy_yo = bool(persona_id) and p.persona_id == persona_id
-        fila_persona(p.nombre, p.nombre + (" (tú)" if soy_yo else ""), "Se unió por Falta Uno", destacado=soy_yo)
+        fila_persona(p.nombre, p.nombre + (" (tú)" if soy_yo else ""), "Se unió por Join In", destacado=soy_yo)
 
 
 def aviso_de_cierre(aviso: datos.Aviso, motivo: str) -> None:
@@ -1874,7 +1874,7 @@ def abrir_dialogo_crear(
 # --------------------------------------------------------------------------- #
 
 
-@ui.page("/", title="Falta Uno")
+@ui.page("/", title="Join In")
 def pagina_inicio(request: Request) -> None:
     preparar_pagina()
     persona_id = persona_de(request)
@@ -1992,7 +1992,7 @@ def pagina_inicio(request: Request) -> None:
     ui.timer(SEGUNDOS_ENTRE_REVISIONES, revisar_cambios)
 
 
-@ui.page("/aviso/{aviso_id}", title="Falta Uno · Aviso")
+@ui.page("/aviso/{aviso_id}", title="Join In · Aviso")
 def pagina_aviso(aviso_id: int, request: Request) -> None:
     preparar_pagina()
     persona_id = persona_de(request)
@@ -2139,7 +2139,7 @@ def _formulario_comentario(
         ui.button(icon="arrow_upward", on_click=enviar).props("unelevated round color=primary").tooltip("Enviar")
 
 
-@ui.page("/buzon", title="Falta Uno · Mi buzón")
+@ui.page("/buzon", title="Join In · Mi buzón")
 def pagina_buzon(request: Request) -> None:
     preparar_pagina()
     persona_id = persona_de(request)
@@ -2264,7 +2264,7 @@ def tarjeta_simple() -> ui.card:
     return ui.card().classes("fu-card w-full")
 
 
-@ui.page("/admin", title="Falta Uno · Administración")
+@ui.page("/admin", title="Join In · Administración")
 def pagina_admin(request: Request) -> None:
     preparar_pagina()
     persona_id = persona_de(request)
@@ -2741,7 +2741,7 @@ datos.inicializar()
 
 if __name__ in {"__main__", "__mp_main__"}:
     ui.run(
-        title="Falta Uno",
+        title="Join In",
         favicon=str(RUTA_FAVICON),  # ícono de la pestaña del navegador
         language="es",
         host="0.0.0.0",  # acepta visitas desde fuera del servidor

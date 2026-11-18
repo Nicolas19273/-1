@@ -1,4 +1,4 @@
-# Falta Uno ⚽
+# Join In
 
 Página web para publicar avisos del tipo «nos falta gente» (un partido, un juego
 de mesa, una salida) y que cualquier persona se una desde su celular o
@@ -76,7 +76,7 @@ queda espacio para otros proyectos en la misma cuenta. Una pestaña abierta
 cuenta como alguien usándola, así que mientras haya una abierta, no se duerme.
 
 **Si tenías un despertador en cron-job.org**, desactívalo: entra a
-cron-job.org → tu cronjob `Falta Uno` → apágalo o bórralo. Si no, la seguirá
+cron-job.org → tu cronjob de esta página → apágalo o bórralo. Si no, la seguirá
 despertando cada 10 minutos.
 
 <details>
