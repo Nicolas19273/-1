@@ -8,28 +8,32 @@ En tu computador, para probar cambios:
     python app.py
 y abre http://localhost:8080
 
-Toda la lógica (cupos, plazos, base de datos) está en datos.py; este archivo
-solo dibuja la página. Para cambiar el diseño más adelante, se edita aquí.
+Este archivo tiene la clase Interfaz: dibuja las páginas y le pide todo lo
+demás a las otras clases del diagrama del informe:
+  * Acceso          (acceso.py)   ingreso con correo institucional
+  * GestorAvisos    (datos.py)    publicar, unirse, comentar, denunciar…
+  * Administracion  (datos.py)    panel /admin
+  * BuscadorLugares (lugares.py)  buscar lugares de Osorno en el mapa
+  * FiltroPalabras  (filtro.py)   palabras inapropiadas
 
-Páginas:
+Páginas (todas piden ingresar con el correo @alumnos.ulagos.cl):
+  /ingresar     correo → código de 6 dígitos → nombre (solo la primera vez)
   /             tablero con los avisos abiertos
   /aviso/<id>   detalle de un aviso (para compartir el enlace)
   /buzon        «Mi buzón»: los avisos que publicaste y a los que te uniste
-  /admin        panel de administración (solo con la clave CLAVE_ADMIN)
+  /admin        panel de administración (además pide la clave CLAVE_ADMIN)
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
-import hmac
 import os
 import re
 import tempfile
-import time
 import urllib.request
 import uuid
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 from collections import Counter
 from datetime import datetime, timedelta
 from functools import partial
@@ -40,7 +44,9 @@ from fastapi import Request
 from nicegui import app as servidor
 from nicegui import ui
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import RedirectResponse
 
+import acceso
 import datos
 import filtro
 import lugares
@@ -372,6 +378,14 @@ body { -webkit-font-smoothing: antialiased; }
 .fu-hoja { border-top: 3px solid var(--tinta); border-radius: 0; box-shadow: none; margin-top: 0; }
 :focus-visible { outline: 3px solid var(--tinta); outline-offset: 3px; }
 .q-dialog .q-card.fu-card { overflow: auto; }
+
+/* Ingreso con correo institucional */
+.fu-ingreso { max-width: 520px; padding-top: 24px; }
+.fu-paso-hecho { background: var(--verde); color: #fff; }
+.fu-ingreso .fu-cupo-libre { color: var(--gris); }
+.fu-codigo input { font-family: "Archivo", sans-serif; font-weight: 900; font-size: 30px; letter-spacing: .35em; text-align: center; }
+.q-btn.fu-yo-btn { min-width: 46px; padding: 0 10px; font-weight: 900; }
+.fu-menu { border: 2.5px solid var(--tinta); border-radius: 14px; box-shadow: 0 5px 0 var(--tinta); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>""".replace("ICONO_LLEGAR", _icono_css('<path d="M4 11l16-7-7 16-2-7z"/>')).replace(
         "ICONO_COMENTAR", _icono_css('<path d="M5 5h14v10H10l-5 4z"/>')
@@ -400,27 +414,30 @@ VALOR_EN_PESOS = {
     ),
 }
 
-COOKIE_IDENTIDAD = "falta_uno_id"
+COOKIE_IDENTIDAD = acceso.Acceso.COOKIE_SESION
 _FORMATO_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
 class IdentidadNavegador(BaseHTTPMiddleware):
     """
-    A cada navegador le da un identificador al azar guardado en una cookie
-    (dura un año). Así la página sabe qué avisos publicaste y a cuáles te
-    uniste, sin cuentas ni contraseñas.
+    A cada navegador le da un identificador al azar guardado en una cookie.
+    Al ingresar con el correo institucional, ese navegador queda unido a la
+    cuenta del estudiante (ver acceso.py). La cookie se renueva en cada
+    visita para que dure un año desde la última vez.
     """
 
     async def dispatch(self, request, call_next):
         actual = request.cookies.get(COOKIE_IDENTIDAD, "")
-        nuevo = None if _FORMATO_ID.match(actual) else uuid.uuid4().hex
-        request.state.persona_id = nuevo or actual
+        valido = bool(_FORMATO_ID.match(actual))
+        dispositivo = actual if valido else uuid.uuid4().hex
+        request.state.dispositivo = dispositivo
         respuesta = await call_next(request)
-        if nuevo:
+        es_pagina = request.method == "GET" and not request.url.path.startswith("/_nicegui")
+        if not valido or es_pagina:
             respuesta.set_cookie(
                 COOKIE_IDENTIDAD,
-                nuevo,
-                max_age=60 * 60 * 24 * 365,
+                dispositivo,
+                max_age=60 * 60 * 24 * acceso.Acceso.DIAS_SESION,
                 httponly=True,
                 samesite="lax",
                 secure=EN_INTERNET,
@@ -431,8 +448,18 @@ class IdentidadNavegador(BaseHTTPMiddleware):
 servidor.add_middleware(IdentidadNavegador)
 
 
-def persona_de(request: Request) -> str | None:
-    return getattr(request.state, "persona_id", None)
+def dispositivo_de(request: Request) -> str | None:
+    return getattr(request.state, "dispositivo", None)
+
+
+def destino_seguro(siguiente: str | None) -> str:
+    """Después de ingresar se vuelve a una página de Join In, nunca a otro sitio."""
+    siguiente = (siguiente or "").strip()
+    if not siguiente.startswith("/") or siguiente.startswith(("//", "/\\")) or "\\" in siguiente:
+        return "/"
+    if siguiente.startswith("/ingresar"):
+        return "/"
+    return siguiente
 
 
 # --------------------------------------------------------------------------- #
@@ -491,7 +518,7 @@ def unir_nombres(nombres: list[str], maximo: int = 3) -> str:
 
 
 def texto_quienes(aviso: datos.Aviso) -> str:
-    partes = [f"Organiza {aviso.creador}"] if aviso.creador else []  # avisos antiguos
+    partes = [f"Organiza {aviso.creador}"] if aviso.creador else []  # nombre registrado de quien publica
     if aviso.participantes:
         verbo = "Se unió" if len(aviso.participantes) == 1 else "Se unieron"
         partes.append(f"{verbo} {unir_nombres(list(aviso.participantes))}")
@@ -691,6 +718,7 @@ def abrir_selector_ubicacion(
     lng: float | None,
     consulta: str,
     al_confirmar: Callable,
+    buscador: lugares.BuscadorLugares = lugares.buscador,
 ) -> None:
     """
     Pantalla completa para elegir el punto, como en las apps de delivery:
@@ -698,13 +726,13 @@ def abrir_selector_ubicacion(
     al_confirmar(lat, lng, lugar_buscado_o_None) se llama al tocar «Usar este punto».
     """
     hay_punto = lat is not None and lng is not None
-    centro_inicial = (lat, lng) if hay_punto else lugares.CENTRO
+    centro_inicial = (lat, lng) if hay_punto else buscador.CENTRO
     estado: dict = {"centro": centro_inicial, "elegido": None}
 
     async def buscar() -> None:
         boton_buscar.props("loading")
         try:
-            encontrados = await asyncio.to_thread(lugares.buscar, campo.value)
+            encontrados = await asyncio.to_thread(buscador.buscar, campo.value)
         except lugares.ErrorBusqueda as error:
             ui.notify(str(error), type="warning", position="top")
             return
@@ -716,7 +744,7 @@ def abrir_selector_ubicacion(
         resultados.clear()
         with resultados, ui.card().classes("fu-card w-full max-w-2xl gap-1").style("padding: 10px; box-shadow: 0 10px 28px rgba(16, 36, 27, .2)"):
             with ui.row().classes("w-full items-center justify-between no-wrap pl-2"):
-                ui.label(f"Resultados en {lugares.NOMBRE_ZONA}").classes(
+                ui.label(f"Resultados en {buscador.NOMBRE_ZONA}").classes(
                     "text-xs font-bold tracking-wide text-stone-500"
                 )
                 ui.button(icon="close", on_click=lambda: resultados.set_visibility(False)).props(
@@ -726,7 +754,7 @@ def abrir_selector_ubicacion(
                 with ui.row().classes("w-full items-center gap-3 no-wrap px-2 pb-2"):
                     ui.icon("search_off", size="22px").classes("text-stone-400 shrink-0")
                     ui.label(
-                        f"No encontramos eso en {lugares.NOMBRE_ZONA}. Prueba con otro nombre o una "
+                        f"No encontramos eso en {buscador.NOMBRE_ZONA}. Prueba con otro nombre o una "
                         "calle, o mueve el mapa hasta el lugar."
                     ).classes("text-sm text-stone-600")
             for lugar in encontrados:
@@ -755,7 +783,7 @@ def abrir_selector_ubicacion(
             return
         estado["centro"] = punto
         elegido = estado["elegido"]
-        if elegido is not None and lugares.metros(*punto, elegido.lat, elegido.lng) > METROS_MISMO_LUGAR:
+        if elegido is not None and buscador.metros(punto, (elegido.lat, elegido.lng)) > METROS_MISMO_LUGAR:
             estado["elegido"] = None
             referencia.text = "Punto elegido a mano: el evento queda donde apunta el pin."
 
@@ -779,9 +807,9 @@ def abrir_selector_ubicacion(
                 position="top",
             )
             return
-        if not lugares.dentro_de_zona(*punto):
+        if not buscador.dentro_de_zona(*punto):
             ui.notify(
-                f"Parece que no estás en {lugares.NOMBRE_ZONA}. Busca el lugar o mueve el mapa.",
+                f"Parece que no estás en {buscador.NOMBRE_ZONA}. Busca el lugar o mueve el mapa.",
                 type="info",
                 position="top",
             )
@@ -807,15 +835,15 @@ def abrir_selector_ubicacion(
 
     async def confirmar() -> None:
         punto = await centro_actual()
-        if not lugares.dentro_de_zona(*punto):
+        if not buscador.dentro_de_zona(*punto):
             ui.notify(
-                f"Por ahora solo se pueden marcar lugares de {lugares.NOMBRE_ZONA}.",
+                f"Por ahora solo se pueden marcar lugares de {buscador.NOMBRE_ZONA}.",
                 type="warning",
                 position="top",
             )
             return
         elegido = estado["elegido"]
-        if elegido is not None and lugares.metros(*punto, elegido.lat, elegido.lng) > METROS_MISMO_LUGAR:
+        if elegido is not None and buscador.metros(punto, (elegido.lat, elegido.lng)) > METROS_MISMO_LUGAR:
             elegido = None
         selector.close()
         resultado = al_confirmar(punto[0], punto[1], elegido)
@@ -940,8 +968,13 @@ def iniciales(nombre: str | None) -> str:
     return (partes[0][:1] + (partes[1][:1] if len(partes) > 1 else "")).upper()
 
 
-def encabezado(persona_id: str | None) -> Callable[[], None]:
-    """Logo + botón «Buzón» con contador. Devuelve la función que actualiza el contador."""
+def encabezado(
+    persona_id: str | None, nombre: str = "", al_salir: Callable[[], None] | None = None
+) -> Callable[[], None]:
+    """
+    Logo + botón «Buzón» con contador + tu cuenta (iniciales, con «Cerrar
+    sesión»). Devuelve la función que actualiza el contador.
+    """
     with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
         with ui.row().classes("items-center gap-3 no-wrap cursor-pointer").on(
             "click", lambda: ui.navigate.to("/")
@@ -950,10 +983,21 @@ def encabezado(persona_id: str | None) -> Callable[[], None]:
             with ui.column().classes("gap-0"):
                 ui.label("Join In").classes("fu-display text-2xl font-extrabold leading-none")
                 ui.label("Avisos para completar el grupo").classes("fu-gris text-sm max-sm:hidden")
-        with ui.button("Buzón", icon="inbox", on_click=lambda: ui.navigate.to("/buzon")).props(
-            "unelevated no-caps"
-        ).classes("fu-blanco shrink-0"):
-            contador = ui.badge("").classes("fu-insignia")
+        with ui.row().classes("items-center gap-2 no-wrap shrink-0"):
+            with ui.button("Buzón", icon="inbox", on_click=lambda: ui.navigate.to("/buzon")).props(
+                "unelevated no-caps"
+            ).classes("fu-blanco shrink-0"):
+                contador = ui.badge("").classes("fu-insignia")
+            if al_salir is not None:
+                with ui.button(iniciales(nombre)).props('unelevated no-caps aria-label="Tu cuenta"').classes(
+                    "fu-blanco fu-yo-btn shrink-0"
+                ):
+                    with ui.menu().classes("fu-menu"):
+                        with ui.column().classes("gap-0 px-4 pt-3 pb-2"):
+                            ui.label(nombre).classes("font-extrabold")
+                            ui.label("Entraste con tu correo institucional").classes("fu-gris text-xs")
+                        ui.separator()
+                        ui.menu_item("Cerrar sesión", on_click=al_salir).classes("font-bold")
 
     mostrado: dict = {"n": None}
 
@@ -971,7 +1015,7 @@ def encabezado(persona_id: str | None) -> Callable[[], None]:
 
 PASOS = [
     ("Publica lo que te falta", "Cuenta qué van a hacer, dónde, a qué hora y cuántas personas faltan."),
-    ("Otros se suman con su nombre", "Sin cuentas ni contraseñas: tocan «Unirme», escriben su nombre y listo."),
+    ("Otros se suman con un toque", "Entran una vez con su correo de la U; después tocan «Unirme» y listo."),
     ("Se completa y se cierra solo", "Cuando ya no falta nadie, el aviso sale del tablero. Queda guardado en tu buzón."),
 ]
 
@@ -995,15 +1039,15 @@ def guia(texto: str) -> None:
         ui.label(texto).classes("text-sm font-semibold")
 
 
-def portada(persona_id: str | None):
+def portada(persona_id: str | None, nombre: str = "", al_salir: Callable[[], None] | None = None):
     """
-    Franja verde de arriba, a todo el ancho, con el logo y el buzón.
+    Franja verde de arriba, a todo el ancho, con el logo, el buzón y tu cuenta.
     Devuelve (función que actualiza el contador, el interior de la franja por
     si la página quiere agregar algo más ahí).
     """
     with ui.element("div").classes("fu-portada"):
         with ui.element("div").classes("fu-portada-dentro") as dentro:
-            actualizar = encabezado(persona_id)
+            actualizar = encabezado(persona_id, nombre, al_salir)
     return actualizar, dentro
 
 
@@ -1158,1523 +1202,1697 @@ def estado_en_buzon(aviso: datos.Aviso, momento: datetime, persona_id: str | Non
         ui.label(secundario).classes("text-xs")
 
 
-def tarjeta_aviso(
-    aviso: datos.Aviso,
-    momento: datetime,
-    persona_id: str | None,
-    al_unirse: Callable[[int], None],
-    al_salirse: Callable[[int], None],
-    al_eliminar: Callable[[int], None],
-    al_denunciar: Callable[[int], None],
-    modo: str = "tablero",  # "tablero" | "detalle" | "buzon"
-) -> None:
-    abierto = aviso.esta_abierto(momento)
-    mio = aviso.es_de(persona_id)
-    anotado = aviso.tiene_inscrito(persona_id)
-    puede_salirse = anotado and (aviso.cancelado or momento < aviso.inicio_evento)
-    puede_unirse = not mio and not anotado and abierto and modo != "buzon"
-    fuerte, _ = colores_de(aviso.categoria)
-    detalle = modo == "detalle"
-
-    def estado_arriba() -> None:
-        """A la derecha: tu rol o la cuenta regresiva."""
-        if aviso.cancelado:
-            etiqueta("Cancelado", "block", rojo=True)
-        elif mio:
-            etiqueta("Tu aviso", "star")
-        elif anotado:
-            etiqueta("Anotado", "check")
-        elif abierto:
-            apuro = (aviso.cierra_en - momento) <= timedelta(hours=6)
-            with ui.row().classes("fu-plazo" + (" fu-plazo-pronto" if apuro else "")):
-                ui.icon("schedule", size="15px")
-                ui.label(texto_tiempo_restante(aviso.cierra_en, momento)).classes("whitespace-nowrap")
-
-    with ui.card().classes("fu-card w-full" + ("" if detalle else " fu-card-viva")):
-        if detalle:
-            # Cabecera en el color de la categoría
-            with ui.column().classes("fu-cabecera gap-3").style(f"background: {fuerte}"):
-                with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
-                    with ui.row().classes("items-center gap-2 no-wrap"):
-                        ui.icon(ICONOS.get(aviso.categoria, "campaign"), size="20px")
-                        ui.label(aviso.nombre_categoria).classes("text-sm font-semibold")
-                    estado_arriba()
-                ui.label(aviso.titulo).classes("fu-display fu-titulo-aviso")
-                if aviso.descripcion:
-                    ui.label(aviso.descripcion).classes("fu-cabecera-texto whitespace-pre-line")
-        else:
-            # Franja del color de la categoría
-            with ui.row().classes("fu-banda").style(f"background: {fuerte}"):
-                with ui.row().classes("items-center gap-2 no-wrap min-w-0"):
-                    ui.icon(ICONOS.get(aviso.categoria, "campaign"), size="18px")
-                    ui.label(aviso.nombre_categoria).classes("ellipsis")
-                estado_arriba()
-            ui.label(aviso.titulo).classes("fu-display fu-titulo-tarjeta cursor-pointer").on(
-                "click", lambda: ui.navigate.to(f"/aviso/{aviso.id}")
-            )
-
-        # Dónde, cuándo y cuánto
-        datos_clave(aviso, momento)
-
-        if aviso.descripcion and not detalle:
-            descripcion = ui.label(aviso.descripcion).classes("fu-dato whitespace-pre-line")
-            if modo == "tablero":
-                descripcion.classes("line-clamp-3")
-
-        barra_cupos(aviso, persona_id, puede_unirse)
-
-        # Quiénes van
-        if modo == "tablero":
-            ui.label(texto_quienes(aviso)).classes("fu-gris text-sm")
-        else:
-            lista_quienes(aviso, persona_id)
-
-        # Pie de la tarjeta
-        if modo == "buzon":
-            estado_en_buzon(aviso, momento, persona_id)
-        elif aviso.cancelado:
-            pass  # el recuadro de "Aviso cancelado" ya lo explica
-        elif mio:
-            ui.label("Es tu aviso: lo ves en tu buzón aunque se llene.").classes(
-                "text-sm font-semibold text-primary"
-            )
-        elif anotado:
-            ui.label("Ya estás anotado: lo tienes en tu buzón.").classes(
-                "text-sm font-semibold text-primary"
-            )
-
-        # Acciones: la principal, cómo llegar, comentarios y denunciar
-        with ui.row().classes("fu-acciones w-full items-center gap-2 mt-auto"):
-            if puede_unirse:
-                ui.button("Unirme", on_click=partial(al_unirse, aviso.id)).props(
-                    "unelevated no-caps"
-                ).classes("fu-cta flex-1")
-            if not aviso.cancelado:
-                ui.link("Cómo llegar", url_mapa_de(aviso), new_tab=True).classes(
-                    ESTILO_ACCION + " fu-llegar"
-                )
-                if not detalle:
-                    ui.link(texto_comentarios(aviso.comentarios), f"/aviso/{aviso.id}").classes(
-                        ESTILO_ACCION + " fu-comentar"
-                    )
-                if not mio:
-                    ui.element("div").classes("grow")
-                    ui.button(icon="outlined_flag", on_click=partial(al_denunciar, aviso.id)).props(
-                        "flat round dense color=grey-7"
-                    ).tooltip("Denunciar este aviso")
-
-        if mio and not aviso.cancelado:
-            ui.button(
-                "Eliminar aviso", icon="delete_outline", on_click=partial(al_eliminar, aviso.id)
-            ).props("flat no-caps").classes("fu-peligro self-start")
-        elif puede_salirse:
-            texto = "Quitar de mi buzón" if aviso.cancelado else "Salirme del evento"
-            ui.button(texto, icon="logout", on_click=partial(al_salirse, aviso.id)).props(
-                "flat no-caps"
-            ).classes("fu-peligro self-start")
-
-
-# --------------------------------------------------------------------------- #
-# Diálogos
-# --------------------------------------------------------------------------- #
-
-
-def abrir_dialogo_unirse(
-    aviso_id: int, capa: ui.element, persona_id: str | None, al_cambiar: Callable[[], None]
-) -> None:
-    aviso = datos.obtener_aviso(aviso_id)
-    if aviso is None or not aviso.esta_abierto(ahora()):
-        ui.notify("Este aviso ya se cerró.", type="warning", position="top")
-        al_cambiar()
-        return
-    if aviso.es_de(persona_id) or aviso.tiene_inscrito(persona_id):
-        ui.notify("Este aviso ya está en tu buzón.", type="info", position="top")
-        al_cambiar()
-        return
-
-    with capa, ui.dialog() as dialogo, ui.card().classes("fu-card p-0 gap-0").style(
-        "width: 460px"
-    ) as tarjeta:
-        cuerpo = ui.column().classes("w-full gap-4")
-
-    def mostrar_confirmacion(actualizado: datos.Aviso, quien: str) -> None:
-        """Pantalla oscura: tu círculo entra en amarillo a la fila de cupos."""
-        momento = ahora()
-        tarjeta.classes("fu-noche")
-        cuerpo.clear()
-        with cuerpo:
-            ui.label(f"¡Listo, {quien}! Estás anotado").classes(
-                "fu-display text-4xl font-extrabold w-full leading-none"
-            )
-            if actualizado.esta_lleno:
-                ui.label("Con eso se completó el grupo").classes("font-bold w-full -mt-1").style(
-                    f"color: {AMARILLO}"
-                )
-            with ui.element("div").classes("fu-festejo w-full"):
-                fila_cupos(actualizado, persona_id, False)
-            with ui.column().classes("fu-seccion").style(f"color: {TINTA}"):
-                ui.label(actualizado.titulo).classes("fu-display text-xl font-bold leading-snug")
-                dato("place", actualizado.lugar)
-                dato("event", texto_fecha_evento(actualizado.inicio_evento, momento))
-                if actualizado.valor is not None:
-                    dato("payments", datos.texto_valor(actualizado.valor))
-                if actualizado.descripcion:
-                    dato("notes", actualizado.descripcion)
-                dato(
-                    "groups",
-                    f"{actualizado.ocupados} de {actualizado.personas_necesarias} · "
-                    f"{texto_faltan(actualizado.cupos_libres)}",
-                )
-                ui.link("Cómo llegar", url_mapa_de(actualizado), new_tab=True).classes(
-                    ESTILO_ACCION + " fu-llegar self-start"
-                )
-            ui.label("Lo guardamos en tu buzón para que no se te olvide dónde y cuándo es.").classes(
-                "text-sm w-full"
-            ).style("color: #C9D6CE")
-            with ui.row().classes("w-full gap-2 no-wrap"):
-                ui.button("Listo", on_click=dialogo.close).props("flat no-caps").classes(
-                    "fu-blanco flex-1"
-                )
-                ui.button("Ver mi buzón", icon="inbox", on_click=lambda: ui.navigate.to("/buzon")).props(
-                    "unelevated no-caps"
-                ).classes("fu-cta flex-1")
-
-    def confirmar() -> None:
-        try:
-            actualizado = datos.unirse(aviso_id, nombre.value, persona_id=persona_id)
-        except datos.ErrorValidacion as error:
-            ui.notify(str(error), type="negative", position="top")
-            vigente = datos.obtener_aviso(aviso_id)
-            if (
-                vigente is None
-                or not vigente.esta_abierto(ahora())
-                or vigente.es_de(persona_id)
-                or vigente.tiene_inscrito(persona_id)
-            ):
-                dialogo.close()
-                al_cambiar()
-            return
-        al_cambiar()
-        mostrar_confirmacion(actualizado, datos.limpiar(nombre.value))
-
-    with cuerpo:
-        ui.label("Te vas a unir a").classes("fu-gris text-sm")
-        ui.label(aviso.titulo).classes("fu-display text-2xl font-bold leading-tight -mt-3")
-        datos_clave(aviso, ahora())
-        with ui.column().classes("fu-panel w-full gap-3"):
-            ui.label(texto_faltan(aviso.cupos_libres)).classes("fu-display fu-falta")
-            fila_cupos(aviso, persona_id, True)
-            ui.label("El círculo amarillo es tu lugar").classes("fu-mano")
-
-        nombre = ui.input(
-            "Tu nombre",
-            placeholder="Ej: Pedro Soto",
-            value=datos.nombre_usado(persona_id),
-            validation=NOMBRE_SIN_GROSERIAS,
-        ).props(f"outlined autofocus maxlength={datos.LARGO_NOMBRE[1]}").classes("w-full")
-        nombre.on("keydown.enter", confirmar)
-
-        with ui.row().classes("w-full gap-2 no-wrap"):
-            ui.button("Cancelar", on_click=dialogo.close).props("flat no-caps").classes("fu-suave")
-            ui.button("Confirmar", icon="check", on_click=confirmar).props(
-                "unelevated no-caps"
-            ).classes("fu-cta flex-1")
-
-    dialogo.on("hide", dialogo.delete)  # se borra al cerrarse
-    dialogo.open()
-
-
-def abrir_dialogo_salirse(
-    aviso_id: int, capa: ui.element, persona_id: str | None, al_cambiar: Callable[[], None]
-) -> None:
-    aviso = datos.obtener_aviso(aviso_id)
-    if aviso is None or not aviso.tiene_inscrito(persona_id):
-        ui.notify("Ya no estás anotado en este aviso.", type="info", position="top")
-        al_cambiar()
-        return
-    if aviso.cancelado:  # solo quitarlo del buzón: no hace falta preguntar
-        try:
-            datos.salirse(aviso_id, persona_id)
-            ui.notify("Lo quitamos de tu buzón.", type="info", position="top")
-        except datos.ErrorValidacion as error:
-            ui.notify(str(error), type="negative", position="top")
-        al_cambiar()
-        return
-
-    def confirmar() -> None:
-        try:
-            actualizado = datos.salirse(aviso_id, persona_id)
-        except datos.ErrorValidacion as error:
-            ui.notify(str(error), type="negative", position="top")
-            dialogo.close()
-            al_cambiar()
-            return
-        dialogo.close()
-        if actualizado.esta_abierto(ahora()):
-            mensaje = f"Te saliste de «{actualizado.titulo}». El aviso volvió a abrirse para que otra persona tome tu lugar."
-        else:
-            mensaje = f"Te saliste de «{actualizado.titulo}». Tu cupo quedó libre."
-        ui.notify(mensaje, type="info", position="top", multi_line=True)
-        al_cambiar()
-
-    with capa, ui.dialog() as dialogo, ui.card().classes("fu-card").style("width: 420px"):
-        ui.icon("logout", size="40px").classes("text-red-700 self-center")
-        ui.label("¿Salirte de este evento?").classes(
-            "fu-display text-2xl font-extrabold text-center w-full"
-        )
-        ui.label(aviso.titulo).classes("fu-gris font-semibold text-center w-full -mt-3")
-        ui.label(
-            "Tu cupo quedará libre. Si el aviso sigue dentro de su plazo, vuelve a aparecer "
-            "en el tablero para que otra persona lo tome. También se quitará de tu buzón."
-        ).classes("text-sm text-stone-600 text-center w-full")
-        with ui.row().classes("w-full gap-2 no-wrap"):
-            ui.button("No, me quedo", on_click=dialogo.close).props("flat no-caps").classes("fu-suave flex-1")
-            ui.button("Sí, salirme", on_click=confirmar).props("unelevated no-caps").classes("fu-peligro flex-1")
-
-    dialogo.on("hide", dialogo.delete)
-    dialogo.open()
-
-
-def abrir_dialogo_eliminar(
-    aviso_id: int,
-    capa: ui.element,
-    persona_id: str | None,
-    al_cambiar: Callable[[], None],
-    al_terminar: Callable[[], None] | None = None,
-    como_admin: bool = False,
-) -> None:
-    aviso = datos.obtener_aviso(aviso_id)
-    permitido = aviso is not None and (
-        aviso.es_de(persona_id) or (como_admin and datos.es_admin(persona_id))
-    )
-    if not permitido or aviso.cancelado:
-        ui.notify("Este aviso ya no se puede eliminar.", type="info", position="top")
-        al_cambiar()
-        return
-
-    def confirmar() -> None:
-        try:
-            datos.eliminar_aviso(aviso_id, persona_id, como_admin=como_admin)
-        except datos.ErrorValidacion as error:
-            ui.notify(str(error), type="negative", position="top")
-            dialogo.close()
-            al_cambiar()
-            return
-        dialogo.close()
-        ui.notify(f"Eliminaste «{aviso.titulo}».", type="info", position="top")
-        al_cambiar()
-        if al_terminar:
-            al_terminar()
-
-    n = len(aviso.inscritos)
-    if n:
-        consecuencia = (
-            f"{'La persona que se unió verá' if n == 1 else f'Las {n} personas que se unieron verán'} "
-            "en su buzón que el evento se canceló."
-        )
-    else:
-        consecuencia = "Nadie se ha unido todavía."
-
-    with capa, ui.dialog() as dialogo, ui.card().classes("fu-card").style("width: 420px"):
-        ui.icon("delete_outline", size="40px").classes("text-red-700 self-center")
-        ui.label("¿Eliminar este aviso?").classes(
-            "fu-display text-2xl font-extrabold text-center w-full"
-        )
-        ui.label(aviso.titulo).classes("fu-gris font-semibold text-center w-full -mt-3")
-        donde = "del tablero y de tu buzón" if aviso.es_de(persona_id) else "del tablero y del buzón de su dueño"
-        ui.label(f"Desaparecerá {donde}. {consecuencia} No se puede deshacer.").classes(
-            "text-sm text-stone-600 text-center w-full"
-        )
-        with ui.row().classes("w-full gap-2 no-wrap"):
-            ui.button("No, mantenerlo", on_click=dialogo.close).props("flat no-caps").classes("fu-suave flex-1")
-            ui.button("Sí, eliminar", on_click=confirmar).props("unelevated no-caps").classes("fu-peligro flex-1")
-
-    dialogo.on("hide", dialogo.delete)
-    dialogo.open()
-
-
-def abrir_dialogo_denunciar(
-    aviso_id: int, capa: ui.element, persona_id: str | None, al_cambiar: Callable[[], None]
-) -> None:
-    aviso = datos.obtener_aviso(aviso_id)
-    if aviso is None or aviso.cancelado:
-        ui.notify("Este aviso ya no está disponible.", type="info", position="top")
-        al_cambiar()
-        return
-    if aviso.es_de(persona_id):
-        ui.notify("No puedes denunciar tu propio aviso.", type="info", position="top")
-        return
-
-    def enviar() -> None:
-        try:
-            datos.denunciar(aviso_id, persona_id, motivo.value, comentario.value)
-        except datos.ErrorValidacion as error:
-            ui.notify(str(error), type="negative", position="top")
-            if "ya denunciaste" in str(error).lower():
-                dialogo.close()
-            return
-        dialogo.close()
-        ui.notify("Gracias. La administración revisará este aviso.", type="positive", position="top")
-        al_cambiar()
-
-    with capa, ui.dialog() as dialogo, ui.card().classes("fu-card").style("width: 440px"):
-        ui.icon("outlined_flag", size="40px").classes("text-red-700 self-center")
-        ui.label("Denunciar aviso").classes("fu-display text-2xl font-extrabold text-center w-full")
-        ui.label(aviso.titulo).classes("fu-gris font-semibold text-center w-full -mt-3")
-        ui.label("¿Qué pasa con este aviso?").classes("text-sm font-semibold text-stone-700")
-        motivo = ui.radio(datos.MOTIVOS_DENUNCIA, value=None).classes("w-full -mt-2")
-        comentario = ui.textarea("Cuéntanos más (opcional)").props(
-            f"outlined autogrow maxlength={datos.LARGO_MAX_DENUNCIA}"
-        ).classes("w-full")
-        ui.label("Quien publicó el aviso no sabrá quién lo denunció.").classes("text-xs text-stone-500")
-        with ui.row().classes("w-full gap-2 no-wrap"):
-            ui.button("Cancelar", on_click=dialogo.close).props("flat no-caps").classes("fu-suave flex-1")
-            ui.button("Enviar denuncia", on_click=enviar).props("unelevated no-caps").classes("fu-peligro flex-1")
-
-    dialogo.on("hide", dialogo.delete)
-    dialogo.open()
-
-
-def abrir_dialogo_crear(
-    capa: ui.element, base_url: str, persona_id: str | None, al_cambiar: Callable[[], None]
-) -> None:
-    momento = ahora()
-    sugerida = (momento + timedelta(hours=2)).replace(minute=0, second=0, microsecond=0)
-
-    with capa, ui.dialog().props("persistent") as dialogo, ui.card().classes(
-        "fu-card fu-gris-fondo fu-pantalla"
-    ).style("width: 580px"):
-        cuerpo = ui.column().classes("w-full gap-3")
-
-    # Ubicación exacta (opcional), elegida en el selector a pantalla completa.
-    # "texto_auto" es lo que escribimos nosotros en «Lugar» (desde el mapa): eso
-    # se puede reemplazar; lo que escribió la persona, nunca. "turno" deja valer
-    # solo la última elección si llegan dos respuestas.
-    ubicacion: dict = {"lat": None, "lng": None, "texto_auto": None, "turno": 0, "direccion": None}
-    vista: dict = {"direccion": None}
-
-    def escrito_por_la_persona() -> bool:
-        texto = (campo_lugar.value or "").strip()
-        return bool(texto) and texto != ubicacion["texto_auto"]
-
-    def abrir_selector() -> None:
-        abrir_selector_ubicacion(
-            capa,
-            lat=ubicacion["lat"],
-            lng=ubicacion["lng"],
-            consulta=(campo_lugar.value or "").strip() if escrito_por_la_persona() else "",
-            al_confirmar=al_elegir_punto,
-        )
-
-    def pintar_ubicacion() -> None:
-        caja_ubicacion.clear()
-        vista["direccion"] = None
-        with caja_ubicacion:
-            if ubicacion["lat"] is None:
-                with ui.row().classes(
-                    "w-full items-center gap-3 no-wrap rounded-2xl border-2 border-dashed border-stone-300 "
-                    "px-3 py-3 cursor-pointer hover:border-green-800"
-                ).on("click", abrir_selector):
-                    with ui.element("div").classes("fu-avatar fu-avatar-yo"):
-                        ui.icon("add_location_alt", size="22px")
-                    with ui.column().classes("gap-0 flex-1 min-w-0"):
-                        ui.label("Marcar en el mapa").classes("font-semibold text-stone-900 leading-tight")
-                        ui.label("Opcional · así «Cómo llegar» lleva al punto exacto").classes(
-                            "text-xs text-stone-500"
-                        )
-                    ui.icon("chevron_right", size="22px").classes("text-stone-400 shrink-0")
-                return
-            dibujo = mapa_de_vista(ubicacion["lat"], ubicacion["lng"], alto="8.5rem", controles=False)
-            if dibujo:
-                dibujo[1].on("map-click", abrir_selector)  # tocar la vista previa = cambiar
-            with ui.row().classes("w-full items-center gap-2 no-wrap"):
-                ui.icon("check_circle", size="20px").classes("text-primary shrink-0")
-                with ui.column().classes("gap-0 flex-1 min-w-0"):
-                    ui.label("Ubicación marcada").classes("text-sm font-semibold text-stone-900 leading-tight")
-                    vista["direccion"] = ui.label(ubicacion["direccion"] or "Punto marcado en el mapa").classes(
-                        "text-xs text-stone-500 ellipsis"
-                    )
-                ui.button("Cambiar", on_click=abrir_selector).props("flat no-caps").classes("fu-suave")
-                ui.button("Quitar", on_click=quitar_ubicacion).props("flat no-caps").classes("fu-peligro")
-
-    async def al_elegir_punto(lat: float, lng: float, lugar) -> None:
-        ubicacion.update(lat=lat, lng=lng)
-        ubicacion["turno"] += 1
-        turno = ubicacion["turno"]
-        if lugar is not None:  # eligió un resultado de la búsqueda
-            ubicacion["direccion"] = lugar.nombre + (f" · {lugar.detalle_corto}" if lugar.detalle_corto else "")
-            if not escrito_por_la_persona():
-                campo_lugar.value = lugar.texto
-                ubicacion["texto_auto"] = lugar.texto
-            pintar_ubicacion()
-            return
-        ubicacion["direccion"] = "Buscando la dirección…"
-        pintar_ubicacion()
-        try:
-            texto = await asyncio.to_thread(lugares.direccion_de, lat, lng)
-        except Exception:
-            texto = None
-        if turno != ubicacion["turno"]:  # ya eligió otro punto o lo quitó
-            return
-        ubicacion["direccion"] = f"Cerca de {texto}" if texto else "Punto marcado en el mapa"
-        try:
-            if texto and not escrito_por_la_persona():
-                campo_lugar.value = texto
-                ubicacion["texto_auto"] = texto
-            if vista["direccion"] is not None:
-                vista["direccion"].text = ubicacion["direccion"]
-        except Exception:  # el formulario se cerró mientras buscábamos
-            pass
-
-    def quitar_ubicacion() -> None:
-        ubicacion.update(lat=None, lng=None, direccion=None)
-        ubicacion["turno"] += 1  # descarta una dirección que venía en camino
-        pintar_ubicacion()
-
-    def actualizar_valor() -> None:
-        con_costo = campo_cobro.value == "pago"
-        campo_valor.set_visibility(con_costo)
-        # Solo números y puntos: cualquier otra cosa se borra al escribirla.
-        texto = campo_valor.value or ""
-        limpio = "".join(c for c in texto if c in "0123456789.")
-        if limpio != texto:
-            campo_valor.value = limpio
-        vista_valor.set_visibility(con_costo)
-        try:
-            monto = datos.parsear_valor(limpio) if con_costo and limpio else None
-        except datos.ErrorValidacion:
-            monto = None
-        vista_valor.text = f"Se mostrará como: {datos.texto_valor(monto)}" if monto else ""
-
-    def actualizar_resumen() -> None:
-        """Vista previa en vivo: así se verán los cupos en el tablero."""
-        actuales, necesarias = campo_actuales.value, campo_necesarias.value
-        caja_previa.clear()
-        if actuales and necesarias and necesarias > actuales:
-            faltan = int(necesarias - actuales)
-            resumen.text = f"Buscan {faltan} persona{'s' if faltan != 1 else ''} más."
-            dibujados = min(int(necesarias), MAX_CUPOS_DIBUJADOS * 2)
-            ocupados = min(int(actuales), dibujados - 1)
-            with caja_previa:
-                for i in range(dibujados):
-                    ui.element("div").classes("fu-cupo " + ("fu-cupo-cara" if i < ocupados else "fu-cupo-libre")).style(
-                        f"background-color: {colores_de(campo_categoria.value)[0]}" if i < ocupados else ""
-                    )
-        else:
-            resumen.text = ""
-            with caja_previa:
-                ui.label("Elige cuántos son y cuántos necesitan para ver cómo quedará.").classes("text-sm").style(
-                    "color: #C9D6CE"
-                )
-
-    def paso(campo, cambio: int, minimo: int, maximo: int) -> None:
-        """Botones − y + de «¿Cuántos son?» y «¿Cuántos necesitan?»."""
-        actual = campo.value
-        nuevo = minimo if actual is None else max(minimo, min(maximo, int(actual) + cambio))
-        campo.set_value(nuevo)
-        # «necesitan» siempre va al menos uno por encima de «son»
-        if campo is campo_actuales and (campo_necesarias.value is None or campo_necesarias.value <= nuevo):
-            campo_necesarias.set_value(min(nuevo + 1, datos.MAX_PERSONAS))
-
-    def elegir_categoria(clave: str) -> None:
-        campo_categoria.value = clave
-        pintar_categorias()
-        actualizar_resumen()
-
-    def pintar_categorias() -> None:
-        caja_categorias.clear()
-        with caja_categorias:
-            for clave, nombre in datos.CATEGORIAS.items():
-                activo = clave == campo_categoria.value
-                with ui.button(on_click=partial(elegir_categoria, clave)).props("flat no-caps").classes(
-                    "fu-chip " + ("fu-chip-activo" if activo else "fu-chip-suave")
-                ):
-                    ui.element("div").classes("fu-punto").style(
-                        f"background: {AMARILLO if activo else colores_de(clave)[0]}"
-                    )
-                    ui.label(nombre)
-
-    def publicar() -> None:
-        try:
-            inicio = datos.armar_fecha_hora(campo_fecha.value, campo_hora.value)
-            aviso = datos.crear_aviso(
-                titulo=campo_titulo.value,
-                categoria=campo_categoria.value,
-                lugar=campo_lugar.value,
-                inicio_evento=inicio,
-                personas_actuales=campo_actuales.value,
-                personas_necesarias=campo_necesarias.value,
-                duracion_horas=campo_duracion.value,
-                descripcion=campo_descripcion.value,
-                creador_id=persona_id,
-                lat=ubicacion["lat"],
-                lng=ubicacion["lng"],
-                valor=0 if campo_cobro.value == "gratis" else campo_valor.value,
-            )
-        except datos.ErrorValidacion as error:
-            ui.notify(str(error), type="negative", position="top")
-            return
-        al_cambiar()
-        mostrar_exito(aviso)
-
-    def mostrar_exito(aviso: datos.Aviso) -> None:
-        enlace = f"{base_url}/aviso/{aviso.id}"
-        tablero = "se completa el grupo"
-        if aviso.cierra_en < aviso.expira_en:
-            tablero += " o llega la hora del evento"
-        cuerpo.clear()
-        with cuerpo:
-            ui.label("¡Aviso publicado!").classes("fu-display text-4xl font-extrabold w-full leading-none mt-4")
-            ui.label(
-                f"Lo verás en tu buzón durante {aviso.duracion_horas} horas, aunque se llene. "
-                f"Del tablero público sale cuando {tablero}."
-            ).classes("fu-gris w-full")
-            with ui.column().classes("fu-seccion"):
-                ui.label("Compártelo por WhatsApp o donde quieras:").classes("text-sm font-semibold")
-                ui.input(value=enlace).props("outlined dense readonly").classes("w-full")
-            with ui.row().classes("w-full gap-2 no-wrap"):
-                ui.button("Listo", on_click=dialogo.close).props("flat no-caps").classes("fu-blanco flex-1")
-                ui.button("Ver mi buzón", icon="inbox", on_click=lambda: ui.navigate.to("/buzon")).props(
-                    "unelevated no-caps"
-                ).classes("fu-cta flex-1")
-            ui.button(
-                "¿Te equivocaste? Eliminar este aviso",
-                icon="delete_outline",
-                on_click=lambda: abrir_dialogo_eliminar(
-                    aviso.id, capa, persona_id, al_cambiar, al_terminar=dialogo.close
-                ),
-            ).props("flat no-caps dense color=red-9").classes("self-center")
-
-    OPCIONES = "spread no-caps unelevated toggle-color=dark color=grey-2 text-color=dark toggle-text-color=white"
-
-    with cuerpo:
-        with ui.row().classes("w-full items-center justify-between no-wrap px-1"):
-            ui.label("Nuevo aviso").classes("fu-display text-3xl font-extrabold")
-            ui.button(icon="close", on_click=dialogo.close).props("flat round").classes("fu-blanco")
-
-        # ¿Qué van a hacer?
-        with ui.column().classes("fu-seccion"):
-            ui.label("¿Qué van a hacer?").classes("fu-display text-xl")
-            ui.label("Elige una categoría y ponle un título claro").classes("fu-mano -mt-2")
-            caja_categorias = ui.row().classes("w-full gap-2")
-            campo_categoria = ui.select(datos.CATEGORIAS, label="Categoría", value="futbol")
-            campo_categoria.set_visibility(False)  # se elige con los botones de arriba
-            pintar_categorias()
-            campo_titulo = ui.input(
-                "Título", placeholder="Ej: Pichanga 7 vs 7, falta uno", validation=SIN_GROSERIAS
-            ).props(f"outlined maxlength={datos.LARGO_TITULO[1]}").classes("w-full")
-
-        # ¿Cuántos son?
-        with ui.column().classes("fu-seccion"):
-            ui.label("¿Cuántos son?").classes("fu-display text-xl")
-            ui.label(f"Cuenta a todos, contigo incluido (máximo {datos.MAX_PERSONAS})").classes("fu-mano -mt-2")
-            with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
-                ui.label("Ya somos").classes("font-extrabold")
-                with ui.element("div").classes("fu-paso"):
-                    ui.button("−", on_click=lambda: paso(campo_actuales, -1, 1, datos.MAX_PERSONAS - 1)).props(
-                        "flat aria-label=\"Uno menos\""
-                    )
-                    campo_actuales = ui.number(
-                        "¿Cuántos son?",
-                        placeholder="9",
-                        min=1,
-                        max=datos.MAX_PERSONAS - 1,
-                        step=1,
-                        format="%d",
-                        on_change=actualizar_resumen,
-                    ).props("borderless dense")
-                    ui.button("+", on_click=lambda: paso(campo_actuales, 1, 1, datos.MAX_PERSONAS - 1)).props(
-                        "flat aria-label=\"Uno más\""
-                    )
-            with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
-                ui.label("Necesitamos en total").classes("font-extrabold")
-                with ui.element("div").classes("fu-paso"):
-                    ui.button("−", on_click=lambda: paso(campo_necesarias, -1, 2, datos.MAX_PERSONAS)).props(
-                        "flat aria-label=\"Uno menos\""
-                    )
-                    campo_necesarias = ui.number(
-                        "¿Cuántos necesitan?",
-                        placeholder="10",
-                        min=2,
-                        max=datos.MAX_PERSONAS,
-                        step=1,
-                        format="%d",
-                        on_change=actualizar_resumen,
-                    ).props("borderless dense")
-                    ui.button("+", on_click=lambda: paso(campo_necesarias, 1, 2, datos.MAX_PERSONAS)).props(
-                        "flat aria-label=\"Uno más\""
-                    )
-            with ui.column().classes("fu-previa w-full gap-3"):
-                ui.label("Así lo verán en el tablero").classes("fu-mano")
-                resumen = ui.label("").classes("fu-display fu-falta")
-                caja_previa = ui.row().classes("fu-cupos")
-            actualizar_resumen()
-
-        # ¿Dónde y cuándo?
-        with ui.column().classes("fu-seccion"):
-            ui.label("¿Dónde y cuándo?").classes("fu-display text-xl")
-            ui.label("Mientras más exacto, más fácil llegar").classes("fu-mano -mt-2")
-            campo_lugar = ui.input(
-                "Lugar", placeholder="Ej: Cancha del liceo, Parque Chuyaca", validation=SIN_GROSERIAS
-            ).props(
-                f"outlined maxlength={datos.LARGO_LUGAR[1]}"
-            ).classes("w-full")
-            caja_ubicacion = ui.column().classes("w-full gap-2")
-            pintar_ubicacion()
-            with ui.row().classes("w-full gap-3 no-wrap"):
-                campo_fecha = ui.input("Fecha", value=sugerida.strftime("%Y-%m-%d")).props(
-                    f"outlined stack-label type=date min={momento:%Y-%m-%d}"
-                ).classes("flex-1")
-                campo_hora = ui.input("Hora", value=sugerida.strftime("%H:%M")).props(
-                    "outlined stack-label type=time"
-                ).classes("flex-1")
-
-        # Valor, detalles y duración
-        with ui.column().classes("fu-seccion"):
-            ui.label("¿Cuánto cuesta por persona?").classes("fu-display text-xl")
-            campo_cobro = ui.toggle(
-                {"gratis": "Gratis ($0)", "pago": "Tiene costo"},
-                value="gratis",
-                on_change=lambda: actualizar_valor(),
-            ).props(OPCIONES).classes("fu-opciones w-full")
-            campo_valor = ui.input(
-                "Valor por persona",
-                placeholder="Ej: 2.000",
-                on_change=lambda: actualizar_valor(),
-                validation=VALOR_EN_PESOS,
-            ).props("outlined prefix=$ suffix=CLP inputmode=numeric maxlength=7").classes("w-full")
-            vista_valor = ui.label("").classes("fu-gris text-xs -mt-2")
-            campo_valor.set_visibility(False)
-
-            campo_descripcion = ui.textarea(
-                "Detalles (opcional)",
-                placeholder="Ej: Se paga la cancha entre todos. Traer polera oscura.",
-                validation=SIN_GROSERIAS,
-            ).props(f"outlined autogrow maxlength={datos.LARGO_MAX_DESCRIPCION}").classes("w-full")
-
-            ui.label("¿Cuánto dura el aviso?").classes("fu-display text-xl")
-            campo_duracion = ui.toggle({24: "24 horas", 48: "48 horas"}, value=24).props(OPCIONES).classes(
-                "fu-opciones w-full"
-            )
-            ui.label(
-                "En el tablero se cierra antes si se completa el grupo o llega la hora del evento. "
-                "En tu buzón lo verás durante todo el plazo."
-            ).classes("fu-gris text-xs")
-
-        ui.button("Publicar aviso", on_click=publicar).props("unelevated no-caps").classes(
-            "fu-cta fu-grande w-full"
-        )
-
-    dialogo.on("hide", dialogo.delete)
-    dialogo.open()
-
-
-# --------------------------------------------------------------------------- #
-# Páginas
-# --------------------------------------------------------------------------- #
-
-
-@ui.page("/", title="Join In")
-def pagina_inicio(request: Request) -> None:
-    preparar_pagina()
-    persona_id = persona_de(request)
-    base_url = URL_PUBLICA or str(request.base_url).rstrip("/")
-    capa = ui.element("div")  # los diálogos viven aquí, fuera de la lista que se redibuja
-    estado: dict = {"categoria": None, "firma": None}
-
-    def refrescar() -> None:
-        lista.refresh()
-        cifras.refresh()
-        actualizar_contador()
-
-    @ui.refreshable
-    def cifras() -> None:
-        """Marcador de la portada: avisos abiertos, cupos libres y cuántos cierran hoy."""
-        momento = ahora()
-        activos = datos.avisos_activos(momento)
-        hoy = sum(1 for a in activos if a.cierra_en.date() == momento.date())
-        for numero, texto in (
-            (len(activos), "aviso abierto" if len(activos) == 1 else "avisos abiertos"),
-            (sum(a.cupos_libres for a in activos), "cupos libres"),
-            (hoy, "cierra hoy" if hoy == 1 else "cierran hoy"),
-        ):
-            with ui.element("div").classes("fu-cifra-caja"):
-                ui.label(str(numero)).classes("fu-cifra")
-                ui.label(texto).classes("fu-cifra-texto")
-
-    def elegir_categoria(clave: str | None) -> None:
-        estado["categoria"] = clave
-        lista.refresh()
-
-    def chip(texto: str, cantidad: int, activo: bool, al_tocar, color: str | None = None) -> None:
-        with ui.button(texto, on_click=al_tocar).props("flat no-caps").classes(
-            "fu-chip" + (" fu-chip-activo" if activo else "")
-        ):
-            ui.label(str(cantidad)).classes("fu-cuenta")
-
-    al_unirse = partial(abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
-    al_salirse = partial(abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
-    al_eliminar = partial(abrir_dialogo_eliminar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
-    al_denunciar = partial(abrir_dialogo_denunciar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
-
-    @ui.refreshable
-    def lista() -> None:
-        momento = ahora()
-        activos = datos.avisos_activos(momento)
-        estado["firma"] = firma(activos, momento)
-
-        elegida = estado["categoria"]
-        visibles = [a for a in activos if elegida in (None, a.categoria)]
-
-        if activos or elegida:
-            conteo = Counter(a.categoria for a in activos)
-            with ui.row().classes("w-full gap-2 no-wrap overflow-x-auto pb-1 md:flex-wrap"):
-                chip("Todos", len(activos), elegida is None, partial(elegir_categoria, None))
-                for clave, nombre in datos.CATEGORIAS.items():
-                    if conteo[clave] or clave == elegida:
-                        chip(
-                            nombre,
-                            conteo[clave],
-                            clave == elegida,
-                            partial(elegir_categoria, clave),
-                        )
-
-        if not visibles:
-            with ui.column().classes("w-full items-center text-center py-16 gap-2"):
-                ui.image(LOGO_URL).props("no-spinner no-transition").classes("w-16 h-16")
-                if elegida:
-                    ui.label(f"No hay avisos abiertos de {datos.CATEGORIAS[elegida]}").classes(
-                        "fu-display text-2xl font-bold"
-                    )
-                else:
-                    ui.label("No hay avisos abiertos").classes("fu-display text-2xl font-bold")
-                ui.label("¿Te falta gente para algo? Publica el primero con «Crear aviso».").classes("fu-gris")
-            return
-
-        with ui.element("div").classes("fu-rejilla"):
-            for aviso in visibles:
-                tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, al_denunciar)
-
-    def revisar_cambios() -> None:
-        momento = ahora()
-        if firma(datos.avisos_activos(momento), momento) != estado["firma"]:
-            lista.refresh()
-            cifras.refresh()
-        actualizar_contador()
-
-    def crear() -> None:
-        abrir_dialogo_crear(capa, base_url, persona_id, refrescar)
-
-    actualizar_contador, dentro = portada(persona_id)
-    with dentro, ui.element("div").classes("fu-portada-fila"):
-        with ui.column().classes("gap-0"):
-            ui.label("¿A quién le falta uno hoy?").classes("fu-display fu-hero")
-            ui.label(
-                "Avisos de eventos de la Universidad de Los Lagos. ¿Falta gente para la pichanga, "
-                "el grupo de estudio o la junta del viernes? Publícalo, o súmate a uno con tu nombre."
-            ).classes("fu-portada-texto")
-            # En el computador el botón va aquí; en el celular, fijo abajo
-            ui.button("Crear aviso", icon="add", on_click=crear).props("unelevated no-caps").classes(
-                "fu-cta fu-grande fu-solo-pc mt-5 self-start"
-            )
-        with ui.element("div").classes("fu-cifras"):
-            cifras()
-
-    with ui.element("div").classes("fu-contenedor"):
-        como_funciona(abierto=not datos.avisos_activos(ahora()))
-        lista()
-
-    with ui.element("div").classes("fu-fab"):
-        ui.button("Crear aviso", icon="add", on_click=crear).props("unelevated no-caps").classes(
-            "fu-cta fu-grande"
-        )
-
-    ui.timer(SEGUNDOS_ENTRE_REVISIONES, revisar_cambios)
-
-
-@ui.page("/aviso/{aviso_id}", title="Join In · Aviso")
-def pagina_aviso(aviso_id: int, request: Request) -> None:
-    preparar_pagina()
-    persona_id = persona_de(request)
-    soy_admin = datos.es_admin(persona_id)
-    capa = ui.element("div")
-    estado: dict = {"firma": None, "comentarios": None}
-
-    def refrescar() -> None:
-        contenido.refresh()
-        lista_comentarios.refresh()
-        actualizar_contador()
-
-    al_unirse = partial(abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
-    al_salirse = partial(abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
-    al_eliminar = partial(abrir_dialogo_eliminar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
-    al_denunciar = partial(abrir_dialogo_denunciar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
-
-    def leer() -> tuple[datos.Aviso | None, tuple | None]:
-        momento = ahora()
-        aviso = datos.obtener_aviso(aviso_id)
-        return aviso, (firma([aviso], momento) if aviso else None)
-
-    @ui.refreshable
-    def contenido() -> None:
-        momento = ahora()
-        aviso, estado["firma"] = leer()
-
-        if aviso is None:
-            with ui.column().classes("w-full items-center text-center py-16 gap-2"):
-                ui.icon("search_off", size="48px").classes("fu-gris")
-                ui.label("Este aviso no existe").classes("fu-display text-2xl font-bold")
-            return
-
-        motivo = aviso.motivo_cierre(momento)
-        if motivo:
-            aviso_de_cierre(aviso, motivo)
-        tarjeta_aviso(
-            aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, al_denunciar, modo="detalle"
-        )
-
-    # ------------------------------------------------------------ comentarios
-    def borrar_comentario(comentario_id: int) -> None:
-        try:
-            datos.borrar_comentario(comentario_id, persona_id, como_admin=soy_admin)
-        except datos.ErrorValidacion as error:
-            ui.notify(str(error), type="negative", position="top")
-        lista_comentarios.refresh()
-
-    @ui.refreshable
-    def lista_comentarios() -> None:
-        aviso = datos.obtener_aviso(aviso_id)
-        if aviso is None:
-            return
-        estado["comentarios"] = aviso.comentarios
-        momento = ahora()
-        comentarios = datos.comentarios_de(aviso_id)
-        ui.label(f"Comentarios ({len(comentarios)})").classes("fu-display text-xl font-bold")
-        if not comentarios:
-            ui.label("Todavía no hay comentarios. ¿Tienes una pregunta? Escríbela aquí abajo.").classes(
-                "text-sm text-stone-500"
-            )
-        for c in comentarios:
-            del_dueno = aviso.es_de(c.persona_id)
-            mio = bool(persona_id) and c.persona_id == persona_id
-            nombre = "Quien organiza" if del_dueno else (c.nombre or "Anónimo")
-            with ui.row().classes("w-full items-start gap-2.5 no-wrap"):
-                color = "fu-avatar-organiza" if del_dueno else ("fu-avatar-yo" if mio else "")
-                ui.label(iniciales(nombre)).classes(f"fu-avatar {color}")
-                with ui.column().classes("fu-burbuja gap-0"):
-                    with ui.row().classes("items-baseline gap-2 no-wrap"):
-                        ui.label(nombre + (" (tú)" if mio else "")).classes("font-bold text-sm")
-                        ui.label(texto_hace(c.momento, momento)).classes("fu-gris text-xs")
-                    ui.label(c.texto).classes("break-words")
-                ui.element("div").classes("grow")
-                if mio or soy_admin:
-                    ui.button(icon="close", on_click=partial(borrar_comentario, c.id)).props(
-                        "flat round dense size=sm color=grey-6"
-                    ).tooltip("Borrar comentario")
-
-    def revisar_cambios() -> None:
-        aviso, nueva_firma = leer()
-        if nueva_firma != estado["firma"]:
-            contenido.refresh()
-        if aviso is not None and aviso.comentarios != estado["comentarios"]:
-            lista_comentarios.refresh()
-        actualizar_contador()
-
-    actualizar_contador, _ = portada(persona_id)
-    with ui.element("div").classes("fu-contenedor"):
-        volver_al_tablero()
-        aviso_inicial = datos.obtener_aviso(aviso_id)
-        # En el computador: el aviso a la izquierda; el mapa y los comentarios a la derecha
-        with ui.element("div").classes("fu-dos" if aviso_inicial is not None else "fu-columna"):
-            with ui.element("div").classes("fu-columna"):
-                contenido()
-            with ui.element("div").classes("fu-columna"):
-                if aviso_inicial is not None and aviso_inicial.tiene_ubicacion and not aviso_inicial.cancelado:
-                    with ui.card().classes("fu-card w-full"):
-                        ui.label("Ubicación").classes("fu-display text-xl font-bold")
-                        mapa_de_vista(aviso_inicial.lat, aviso_inicial.lng)
-                        with ui.row().classes("w-full items-center justify-between gap-3"):
-                            ui.label(aviso_inicial.lugar).classes("font-semibold min-w-0 flex-1")
-                            ui.link("Cómo llegar", url_mapa_de(aviso_inicial), new_tab=True).classes(
-                                ESTILO_ACCION + " fu-llegar shrink-0"
-                            )
-                if aviso_inicial is not None:
-                    with ui.card().classes("fu-card w-full"):
-                        lista_comentarios()
-                        if not aviso_inicial.cancelado:
-                            _formulario_comentario(aviso_inicial, persona_id, lista_comentarios.refresh)
-
-    ui.timer(SEGUNDOS_ENTRE_REVISIONES, revisar_cambios)
-
-
-def _formulario_comentario(
-    aviso: datos.Aviso, persona_id: str | None, al_comentar: Callable[[], None]
-) -> None:
-    """Formulario fuera de la lista que se redibuja, para no perder lo que se está escribiendo."""
-    ui.separator().classes("my-1")
-    if aviso.es_de(persona_id):
-        campo_nombre = None
-        ui.label("Comentas como quien organiza.").classes("fu-gris text-xs")
-    else:
-        campo_nombre = ui.input(
-            "Tu nombre", value=datos.nombre_usado(persona_id), validation=NOMBRE_SIN_GROSERIAS
-        ).props(f"outlined dense maxlength={datos.LARGO_NOMBRE[1]}").classes("w-full")
-    with ui.row().classes("w-full items-start gap-2 no-wrap"):
-        campo_texto = ui.input(
-            "Escribe un comentario…", placeholder="Ej: ¿Se paga la cancha?", validation=SIN_GROSERIAS
-        ).props(f"outlined dense rounded maxlength={datos.LARGO_MAX_COMENTARIO} counter").classes("grow")
-
-        def enviar() -> None:
-            try:
-                datos.comentar(
-                    aviso.id, persona_id, campo_nombre.value if campo_nombre else "", campo_texto.value
-                )
-            except datos.ErrorValidacion as error:
-                ui.notify(str(error), type="negative", position="top")
-                return
-            campo_texto.value = ""
-            al_comentar()
-
-        campo_texto.on("keydown.enter", enviar)
-        ui.button(icon="arrow_upward", on_click=enviar).props("unelevated round color=primary").tooltip("Enviar")
-
-
-@ui.page("/buzon", title="Join In · Mi buzón")
-def pagina_buzon(request: Request) -> None:
-    preparar_pagina()
-    persona_id = persona_de(request)
-    capa = ui.element("div")
-    estado: dict = {"firma": None}
-
-    def refrescar() -> None:
-        contenido.refresh()
-        actualizar_contador()
-
-    al_unirse = partial(abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
-    al_salirse = partial(abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
-    al_eliminar = partial(abrir_dialogo_eliminar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
-    al_denunciar = partial(abrir_dialogo_denunciar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
-
-    def leer() -> tuple[list[datos.Aviso], list[datos.Aviso], tuple]:
-        momento = ahora()
-        me_uni, organizo = datos.mi_buzon(persona_id, momento)
-        return me_uni, organizo, (firma(me_uni, momento), firma(organizo, momento))
-
-    def seccion(titulo: str, explicacion: str, icono: str) -> None:
-        ui.label(titulo).classes("fu-display text-2xl font-bold mt-2")
-        ui.label(explicacion).classes("fu-gris text-sm -mt-4")
-
-    @ui.refreshable
-    def contenido() -> None:
-        momento = ahora()
-        me_uni, organizo, estado["firma"] = leer()
-
-        if not me_uni and not organizo:
-            with ui.column().classes("w-full items-center text-center py-16 gap-2"):
-                ui.icon("inbox", size="56px").classes("fu-gris")
-                ui.label("Tu buzón está vacío").classes("fu-display text-2xl font-bold")
-                ui.label(
-                    "Cuando te unas a un evento o publiques uno, aparecerá aquí con todos sus detalles."
-                ).classes("fu-gris max-w-sm")
-                ui.button("Ver avisos abiertos", on_click=lambda: ui.navigate.to("/")).props(
-                    "unelevated no-caps"
-                ).classes("fu-cta mt-2")
-            return
-
-        if me_uni:
-            seccion(
-                "Me uní",
-                "Dónde y cuándo es cada evento. Se quitan solos unas horas después de que empiezan.",
-                "event_available",
-            )
-            with ui.element("div").classes("fu-rejilla"):
-                for aviso in me_uni:
-                    tarjeta_aviso(
-                        aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, al_denunciar, modo="buzon"
-                    )
-
-        if organizo:
-            seccion(
-                "Mis avisos",
-                "Los que publicaste. Siguen aquí aunque se llenen, hasta que termina su plazo.",
-                "campaign",
-            )
-            with ui.element("div").classes("fu-rejilla"):
-                for aviso in organizo:
-                    tarjeta_aviso(
-                        aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, al_denunciar, modo="buzon"
-                    )
-
-    def revisar_cambios() -> None:
-        if leer()[2] != estado["firma"]:
-            contenido.refresh()
-        actualizar_contador()
-
-    actualizar_contador, _ = portada(persona_id)
-    with ui.element("div").classes("fu-contenedor"):
-        volver_al_tablero()
-        ui.label("Mi buzón").classes("fu-display fu-titulo-pagina")
-        contenido()
-        ui.label(
-            "Tu buzón se guarda en este navegador. Si abres la página en otro teléfono, "
-            "en modo incógnito o borras las cookies, no verás estos eventos ahí."
-        ).classes("fu-gris text-xs text-center w-full mt-6")
-
-    ui.timer(SEGUNDOS_ENTRE_REVISIONES, revisar_cambios)
-
-
-# --------------------------------------------------------------------------- #
-# Panel de administración (/admin): solo para quien administra la página
-#
-# Se activa creando en Render la variable de entorno CLAVE_ADMIN (ver README).
-# Quien escribe la clave correcta queda como administrador en ese navegador
-# hasta que cierre la sesión. La dirección /admin no aparece en ningún botón.
-# --------------------------------------------------------------------------- #
-
-CLAVE_ADMIN = os.environ.get("CLAVE_ADMIN", "")
-MAX_INTENTOS = 5  # intentos fallidos permitidos…
-MINUTOS_BLOQUEO = 15  # …cada tantos minutos, por dirección IP
-_intentos_fallidos: dict[str, list[float]] = {}
-
-
-def clave_correcta(clave: str | None) -> bool:
-    return bool(CLAVE_ADMIN) and hmac.compare_digest((clave or "").encode(), CLAVE_ADMIN.encode())
-
-
-def _demasiados_intentos(quien: str) -> bool:
-    limite = time.time() - MINUTOS_BLOQUEO * 60
-    recientes = [t for t in _intentos_fallidos.get(quien, []) if t > limite]
-    _intentos_fallidos[quien] = recientes
-    return len(recientes) >= MAX_INTENTOS
-
-
-def _anotar_intento_fallido(quien: str) -> None:
-    _intentos_fallidos.setdefault(quien, []).append(time.time())
-
-
-ESTADOS_ADMIN = {
-    None: "Abierto",
-    datos.COMPLETO: "Completo",
-    datos.INICIADO: "Ya empezó",
-    datos.VENCIDO: "Plazo cumplido",
-}
-
-
 def tarjeta_simple() -> ui.card:
     return ui.card().classes("fu-card w-full")
 
 
-@ui.page("/admin", title="Join In · Administración")
-def pagina_admin(request: Request) -> None:
-    preparar_pagina()
-    persona_id = persona_de(request)
-    cliente = getattr(request, "client", None)
-    ip = getattr(cliente, "host", None) or "desconocida"
-    capa = ui.element("div")
-
-    portada(persona_id)
-    with ui.element("div").classes("fu-contenedor fu-angosto"):
-        with ui.row().classes("items-center gap-2 no-wrap"):
-            ui.icon("admin_panel_settings", size="30px").classes("text-primary")
-            ui.label("Administración").classes("fu-display fu-titulo-pagina")
-
-        if not CLAVE_ADMIN:
-            with tarjeta_simple():
-                ui.label("El panel está desactivado").classes("fu-display text-xl")
-                ui.label(
-                    "Para activarlo, en Render entra a tu servicio → Environment → Add Environment "
-                    "Variable, crea CLAVE_ADMIN con una clave larga que solo tú conozcas y guarda. "
-                    "Render reinicia la página solo."
-                ).classes("fu-gris")
-            return
-
-        if not datos.es_admin(persona_id):
-            _formulario_ingreso(persona_id, ip)
-            return
-
-        _panel(persona_id, capa)
+# --------------------------------------------------------------------------- #
+# Interfaz: las páginas y los diálogos (clase Interfaz del informe)
+# --------------------------------------------------------------------------- #
 
 
-def _formulario_ingreso(persona_id: str | None, ip: str) -> None:
-    with tarjeta_simple():
-        ui.label("Esta sección es solo para quien administra la página.").classes("fu-gris")
-        clave = ui.input("Clave de administración", password=True, password_toggle_button=True).props(
-            "outlined autofocus"
-        ).classes("w-full")
+class Interfaz:
+    """
+    «boundary» Dibuja las páginas y recibe lo que hace el estudiante. No decide
+    reglas: se las pide a GestorAvisos, Acceso, Administracion, BuscadorLugares
+    y FiltroPalabras.
+    """
 
-        def entrar() -> None:
-            if _demasiados_intentos(ip):
-                ui.notify(
-                    f"Demasiados intentos. Espera {MINUTOS_BLOQUEO} minutos.", type="negative", position="top"
-                )
+    COLOR_PRINCIPAL = COLOR_PRINCIPAL
+    TINTA = TINTA
+    AMARILLO = AMARILLO
+    FONDO = FONDO
+    ICONOS = ICONOS
+    COLORES = COLORES
+    SEGUNDOS_ENTRE_REVISIONES = SEGUNDOS_ENTRE_REVISIONES
+    MAX_CUPOS_DIBUJADOS = MAX_CUPOS_DIBUJADOS
+
+    def __init__(
+        self,
+        acceso_estudiantes: acceso.Acceso,
+        gestor: datos.GestorAvisos,
+        buscador: lugares.BuscadorLugares,
+        filtro_palabras: filtro.FiltroPalabras,
+        administracion: datos.Administracion,
+    ) -> None:
+        self.acceso = acceso_estudiantes
+        self.gestor = gestor
+        self.buscador = buscador
+        self.filtro = filtro_palabras
+        self.administracion = administracion
+
+    def registrar_paginas(self) -> None:
+        ui.page("/ingresar", title="Join In · Ingresar")(self.pagina_ingreso)
+        ui.page("/", title="Join In")(self.pagina_inicio)
+        ui.page("/aviso/{aviso_id}", title="Join In · Aviso")(self.pagina_aviso)
+        ui.page("/buzon", title="Join In · Mi buzón")(self.pagina_buzon)
+        ui.page("/admin", title="Join In · Administración")(self.pagina_admin)
+
+    # ------------------------------------------------------------------ #
+    # Sesión
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _a_ingresar(destino: str) -> RedirectResponse:
+        return RedirectResponse(f"/ingresar?siguiente={quote(destino, safe='/')}", status_code=303)
+
+    def _portada(self, persona_id: str, dispositivo: str | None):
+        """Franja de arriba con el nombre del estudiante y «Cerrar sesión»."""
+
+        def salir() -> None:
+            self.acceso.cerrar_sesion(dispositivo)
+            ui.navigate.to("/ingresar")
+
+        return portada(persona_id, self.acceso.nombre_en(dispositivo), salir)
+
+    def _sigue_la_sesion(self, dispositivo: str | None, persona_id: str, destino: str) -> bool:
+        """Si la sesión se cerró (por ejemplo, al entrar desde un tercer navegador), vuelve a ingresar."""
+        if self.acceso.persona_de(dispositivo) == persona_id:
+            return True
+        ui.navigate.to(f"/ingresar?siguiente={quote(destino, safe='/')}")
+        return False
+
+    # ------------------------------------------------------------------ #
+    # Página de ingreso
+    # ------------------------------------------------------------------ #
+
+    def pagina_ingreso(self, request: Request, siguiente: str = "/"):
+        destino = destino_seguro(siguiente)
+        dispositivo = dispositivo_de(request)
+        if self.acceso.persona_de(dispositivo):
+            return RedirectResponse(destino, status_code=303)
+
+        preparar_pagina()
+        estado: dict = {"paso": "correo", "correo": "", "codigo_prueba": None, "ocupado": False}
+
+        with ui.element("div").classes("fu-portada"):
+            with ui.element("div").classes("fu-portada-dentro"):
+                with ui.row().classes("items-center gap-3 no-wrap"):
+                    ui.image(LOGO_URL).props("no-spinner no-transition").classes("w-11 h-11 shrink-0")
+                    ui.label("Join In").classes("fu-display text-2xl font-extrabold leading-none")
+                with ui.element("div").classes("fu-portada-fila"):
+                    with ui.column().classes("gap-0"):
+                        ui.label("¿A quién le falta uno hoy?").classes("fu-display fu-hero")
+                        ui.label(
+                            "Avisos de eventos de la Universidad de Los Lagos. Entra con tu correo "
+                            "institucional para ver los avisos, publicar el tuyo y sumarte con un toque."
+                        ).classes("fu-portada-texto")
+
+        def pasos(actual: int) -> None:
+            """Tres cupos: los hechos en verde, el de ahora en amarillo."""
+            with ui.row().classes("items-center gap-2 no-wrap"):
+                for numero, nombre in enumerate(("Correo", "Código", "Tu nombre"), start=1):
+                    if numero < actual:
+                        clase = "fu-cupo fu-paso-hecho"
+                    elif numero == actual:
+                        clase = "fu-cupo fu-cupo-tuyo"
+                    else:
+                        clase = "fu-cupo fu-cupo-libre"
+                    with ui.row().classes("items-center gap-1.5 no-wrap"):
+                        ui.label("✓" if numero < actual else str(numero)).classes(clase)
+                        ui.label(nombre).classes("text-xs font-bold" + ("" if numero == actual else " fu-gris"))
+
+        async def enviar(reenviar: bool = False) -> None:
+            if estado["ocupado"]:
                 return
-            if not clave_correcta(clave.value):
-                _anotar_intento_fallido(ip)
-                ui.notify("Clave incorrecta.", type="negative", position="top")
-                return
+            correo = estado["correo"] if reenviar else campo_correo.value
+            estado["ocupado"] = True
             try:
-                datos.agregar_admin(persona_id)
+                codigo = await asyncio.to_thread(self.acceso.enviar_codigo, correo)
             except datos.ErrorValidacion as error:
                 ui.notify(str(error), type="negative", position="top")
                 return
-            ui.navigate.to("/admin")
+            finally:
+                estado["ocupado"] = False
+            estado.update(paso="codigo", correo=self.acceso.normalizar_correo(correo), codigo_prueba=codigo)
+            if reenviar:
+                ui.notify("Te enviamos un código nuevo.", type="info", position="top")
+            tarjeta.refresh()
 
-        clave.on("keydown.enter", entrar)
-        ui.button("Entrar", icon="login", on_click=entrar).props("unelevated rounded no-caps").classes(
-            "self-end"
+        def entrar(persona_nueva: bool) -> None:
+            try:
+                self.acceso.registrar(
+                    estado["correo"], campo_nombre.value if persona_nueva else "", dispositivo
+                )
+            except datos.ErrorValidacion as error:
+                ui.notify(str(error), type="negative", position="top")
+                if "pide uno nuevo" in str(error).lower():
+                    volver_al_correo()
+                return
+            ui.navigate.to(destino)
+
+        def verificar() -> None:
+            try:
+                correcto = self.acceso.verificar_codigo(estado["correo"], campo_codigo.value)
+            except datos.ErrorValidacion as error:
+                ui.notify(str(error), type="negative", position="top")
+                volver_al_correo()
+                return
+            if not correcto:
+                ui.notify("Ese código no es correcto. Revisa el último correo que te llegó.", type="negative", position="top")
+                return
+            if self.acceso.estudiante_existe(estado["correo"]):
+                entrar(persona_nueva=False)
+            else:
+                estado["paso"] = "nombre"
+                tarjeta.refresh()
+
+        def volver_al_correo() -> None:
+            estado.update(paso="correo", codigo_prueba=None)
+            tarjeta.refresh()
+
+        campo_correo = campo_codigo = campo_nombre = None
+
+        @ui.refreshable
+        def tarjeta() -> None:
+            nonlocal campo_correo, campo_codigo, campo_nombre
+            with ui.card().classes("fu-card w-full gap-4"):
+                if estado["paso"] == "correo":
+                    pasos(1)
+                    ui.label("Entra con tu correo de la U").classes("fu-display text-3xl leading-none")
+                    ui.label(
+                        "Solo para estudiantes: te mandamos un código para confirmar que el correo es tuyo. "
+                        "No hay contraseña que recordar."
+                    ).classes("fu-gris -mt-2")
+                    campo_correo = ui.input(
+                        "Correo institucional",
+                        placeholder=f"nombre.apellido@{self.acceso.DOMINIO_PERMITIDO}",
+                        value=estado["correo"],
+                    ).props("outlined autofocus type=email inputmode=email autocomplete=email").classes("w-full")
+                    campo_correo.on("keydown.enter", lambda: enviar())
+                    ui.button("Enviarme el código", icon="mail", on_click=lambda: enviar()).props(
+                        "unelevated no-caps"
+                    ).classes("fu-cta fu-grande w-full")
+                    ui.label(
+                        "Tu correo no se muestra a nadie: en los avisos solo aparece tu nombre."
+                    ).classes("fu-gris text-xs")
+
+                elif estado["paso"] == "codigo":
+                    pasos(2)
+                    ui.label("Revisa tu correo").classes("fu-display text-3xl leading-none")
+                    ui.label(
+                        f"Te enviamos un código de {self.acceso.LARGO_CODIGO} dígitos a {estado['correo']}. "
+                        f"Vale {self.acceso.MINUTOS_CODIGO} minutos. Si no lo ves, revisa la carpeta de spam."
+                    ).classes("fu-gris -mt-2 break-words")
+                    if estado["codigo_prueba"]:
+                        with ui.column().classes("fu-guia w-full gap-0"):
+                            ui.label("Modo de prueba").classes("font-extrabold")
+                            ui.label(
+                                "El envío de correos todavía no está configurado en esta página, "
+                                f"así que el código aparece aquí: {estado['codigo_prueba']}"
+                            ).classes("text-sm")
+                    campo_codigo = ui.input("Código", placeholder="000000").props(
+                        f"outlined autofocus inputmode=numeric autocomplete=one-time-code "
+                        f"maxlength={self.acceso.LARGO_CODIGO}"
+                    ).classes("fu-codigo w-full")
+                    campo_codigo.on("keydown.enter", verificar)
+                    ui.button("Entrar", icon="login", on_click=verificar).props("unelevated no-caps").classes(
+                        "fu-cta fu-grande w-full"
+                    )
+                    with ui.row().classes("w-full justify-between gap-2"):
+                        ui.button("Usar otro correo", on_click=volver_al_correo).props("flat no-caps").classes(
+                            "fu-suave"
+                        )
+                        ui.button("Reenviar código", on_click=lambda: enviar(reenviar=True)).props(
+                            "flat no-caps"
+                        ).classes("fu-suave")
+
+                else:
+                    pasos(3)
+                    ui.label("¿Cómo te llamas?").classes("fu-display text-3xl leading-none")
+                    ui.label(
+                        "Es el nombre que verán los demás cuando te unas a un aviso o comentes. "
+                        "Lo escribes una sola vez."
+                    ).classes("fu-gris -mt-2")
+                    campo_nombre = ui.input(
+                        "Tu nombre", placeholder="Ej: Camila Soto", validation=NOMBRE_SIN_GROSERIAS
+                    ).props(f"outlined autofocus autocomplete=name maxlength={datos.LARGO_NOMBRE[1]}").classes(
+                        "w-full"
+                    )
+                    campo_nombre.on("keydown.enter", lambda: entrar(persona_nueva=True))
+                    ui.button("Listo, entrar", icon="check", on_click=lambda: entrar(persona_nueva=True)).props(
+                        "unelevated no-caps"
+                    ).classes("fu-cta fu-grande w-full")
+
+        with ui.element("div").classes("fu-contenedor fu-ingreso"):
+            tarjeta()
+            ui.label(
+                f"Cada correo puede estar abierto en {self.acceso.MAX_DISPOSITIVOS} navegadores a la vez "
+                "(por ejemplo, tu celular y tu computador). Este navegador te recordará por un año."
+            ).classes("fu-gris text-xs text-center w-full")
+
+    # ------------------------------------------------------------------ #
+    # Tarjeta de cada aviso
+    # ------------------------------------------------------------------ #
+
+    def tarjeta_aviso(
+        self,
+        aviso: datos.Aviso,
+        momento: datetime,
+        persona_id: str | None,
+        al_unirse: Callable[[int], None],
+        al_salirse: Callable[[int], None],
+        al_eliminar: Callable[[int], None],
+        al_denunciar: Callable[[int], None],
+        modo: str = "tablero",  # "tablero" | "detalle" | "buzon"
+    ) -> None:
+        abierto = aviso.esta_abierto(momento)
+        mio = aviso.es_de(persona_id)
+        anotado = aviso.tiene_inscrito(persona_id)
+        puede_salirse = anotado and (aviso.cancelado or momento < aviso.inicio_evento)
+        puede_unirse = not mio and not anotado and abierto and modo != "buzon"
+        fuerte, _ = colores_de(aviso.categoria)
+        detalle = modo == "detalle"
+
+        def estado_arriba() -> None:
+            """A la derecha: tu rol o la cuenta regresiva."""
+            if aviso.cancelado:
+                etiqueta("Cancelado", "block", rojo=True)
+            elif mio:
+                etiqueta("Tu aviso", "star")
+            elif anotado:
+                etiqueta("Anotado", "check")
+            elif abierto:
+                apuro = (aviso.cierra_en - momento) <= timedelta(hours=6)
+                with ui.row().classes("fu-plazo" + (" fu-plazo-pronto" if apuro else "")):
+                    ui.icon("schedule", size="15px")
+                    ui.label(texto_tiempo_restante(aviso.cierra_en, momento)).classes("whitespace-nowrap")
+
+        with ui.card().classes("fu-card w-full" + ("" if detalle else " fu-card-viva")):
+            if detalle:
+                # Cabecera en el color de la categoría
+                with ui.column().classes("fu-cabecera gap-3").style(f"background: {fuerte}"):
+                    with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
+                        with ui.row().classes("items-center gap-2 no-wrap"):
+                            ui.icon(ICONOS.get(aviso.categoria, "campaign"), size="20px")
+                            ui.label(aviso.nombre_categoria).classes("text-sm font-semibold")
+                        estado_arriba()
+                    ui.label(aviso.titulo).classes("fu-display fu-titulo-aviso")
+                    if aviso.descripcion:
+                        ui.label(aviso.descripcion).classes("fu-cabecera-texto whitespace-pre-line")
+            else:
+                # Franja del color de la categoría
+                with ui.row().classes("fu-banda").style(f"background: {fuerte}"):
+                    with ui.row().classes("items-center gap-2 no-wrap min-w-0"):
+                        ui.icon(ICONOS.get(aviso.categoria, "campaign"), size="18px")
+                        ui.label(aviso.nombre_categoria).classes("ellipsis")
+                    estado_arriba()
+                ui.label(aviso.titulo).classes("fu-display fu-titulo-tarjeta cursor-pointer").on(
+                    "click", lambda: ui.navigate.to(f"/aviso/{aviso.id}")
+                )
+
+            # Dónde, cuándo y cuánto
+            datos_clave(aviso, momento)
+
+            if aviso.descripcion and not detalle:
+                descripcion = ui.label(aviso.descripcion).classes("fu-dato whitespace-pre-line")
+                if modo == "tablero":
+                    descripcion.classes("line-clamp-3")
+
+            barra_cupos(aviso, persona_id, puede_unirse)
+
+            # Quiénes van
+            if modo == "tablero":
+                ui.label(texto_quienes(aviso)).classes("fu-gris text-sm")
+            else:
+                lista_quienes(aviso, persona_id)
+
+            # Pie de la tarjeta
+            if modo == "buzon":
+                estado_en_buzon(aviso, momento, persona_id)
+            elif aviso.cancelado:
+                pass  # el recuadro de "Aviso cancelado" ya lo explica
+            elif mio:
+                ui.label("Es tu aviso: lo ves en tu buzón aunque se llene.").classes(
+                    "text-sm font-semibold text-primary"
+                )
+            elif anotado:
+                ui.label("Ya estás anotado: lo tienes en tu buzón.").classes(
+                    "text-sm font-semibold text-primary"
+                )
+
+            # Acciones: la principal, cómo llegar, comentarios y denunciar
+            with ui.row().classes("fu-acciones w-full items-center gap-2 mt-auto"):
+                if puede_unirse:
+                    ui.button("Unirme", on_click=partial(al_unirse, aviso.id)).props(
+                        "unelevated no-caps"
+                    ).classes("fu-cta flex-1")
+                if not aviso.cancelado:
+                    ui.link("Cómo llegar", url_mapa_de(aviso), new_tab=True).classes(
+                        ESTILO_ACCION + " fu-llegar"
+                    )
+                    if not detalle:
+                        ui.link(texto_comentarios(aviso.comentarios), f"/aviso/{aviso.id}").classes(
+                            ESTILO_ACCION + " fu-comentar"
+                        )
+                    if not mio:
+                        ui.element("div").classes("grow")
+                        ui.button(icon="outlined_flag", on_click=partial(al_denunciar, aviso.id)).props(
+                            "flat round dense color=grey-7"
+                        ).tooltip("Denunciar este aviso")
+
+            if mio and not aviso.cancelado:
+                ui.button(
+                    "Eliminar aviso", icon="delete_outline", on_click=partial(al_eliminar, aviso.id)
+                ).props("flat no-caps").classes("fu-peligro self-start")
+            elif puede_salirse:
+                texto = "Quitar de mi buzón" if aviso.cancelado else "Salirme del evento"
+                ui.button(texto, icon="logout", on_click=partial(al_salirse, aviso.id)).props(
+                    "flat no-caps"
+                ).classes("fu-peligro self-start")
+
+    # ------------------------------------------------------------------ #
+    # Diálogos
+    # ------------------------------------------------------------------ #
+
+    def abrir_dialogo_unirse(
+        self, aviso_id: int, capa: ui.element, persona_id: str | None, al_cambiar: Callable[[], None]
+    ) -> None:
+        """Unirse es un toque: se anota con el nombre registrado y se muestra la confirmación."""
+        aviso = self.gestor.obtener_aviso(aviso_id)
+        if aviso is None or not aviso.esta_abierto(ahora()):
+            ui.notify("Este aviso ya se cerró.", type="warning", position="top")
+            al_cambiar()
+            return
+        if aviso.es_de(persona_id) or aviso.tiene_inscrito(persona_id):
+            ui.notify("Este aviso ya está en tu buzón.", type="info", position="top")
+            al_cambiar()
+            return
+        try:
+            actualizado = self.gestor.unirse(aviso_id, persona_id)
+        except datos.ErrorValidacion as error:
+            ui.notify(str(error), type="negative", position="top")
+            al_cambiar()
+            return
+        al_cambiar()
+
+        quien = next((p.nombre for p in actualizado.inscritos if p.persona_id == persona_id), "")
+        momento = ahora()
+
+        def deshacer() -> None:
+            try:
+                self.gestor.salirse(aviso_id, persona_id)
+            except datos.ErrorValidacion as error:
+                ui.notify(str(error), type="negative", position="top")
+            else:
+                ui.notify(f"Listo, ya no estás en «{actualizado.titulo}».", type="info", position="top")
+            dialogo.close()
+            al_cambiar()
+
+        with capa, ui.dialog() as dialogo, ui.card().classes("fu-card fu-noche p-0 gap-0").style("width: 460px"):
+            with ui.column().classes("w-full gap-4"):
+                ui.label(f"¡Listo, {quien}! Estás anotado" if quien else "¡Listo! Estás anotado").classes(
+                    "fu-display text-4xl font-extrabold w-full leading-none"
+                )
+                if actualizado.esta_lleno:
+                    ui.label("Con eso se completó el grupo").classes("font-bold w-full -mt-1").style(
+                        f"color: {AMARILLO}"
+                    )
+                with ui.element("div").classes("fu-festejo w-full"):
+                    fila_cupos(actualizado, persona_id, False)
+                with ui.column().classes("fu-seccion").style(f"color: {TINTA}"):
+                    ui.label(actualizado.titulo).classes("fu-display text-xl font-bold leading-snug")
+                    dato("place", actualizado.lugar)
+                    dato("event", texto_fecha_evento(actualizado.inicio_evento, momento))
+                    if actualizado.valor is not None:
+                        dato("payments", datos.texto_valor(actualizado.valor))
+                    if actualizado.descripcion:
+                        dato("notes", actualizado.descripcion)
+                    dato(
+                        "groups",
+                        f"{actualizado.ocupados} de {actualizado.personas_necesarias} · "
+                        f"{texto_faltan(actualizado.cupos_libres)}",
+                    )
+                    ui.link("Cómo llegar", url_mapa_de(actualizado), new_tab=True).classes(
+                        ESTILO_ACCION + " fu-llegar self-start"
+                    )
+                ui.label("Lo guardamos en tu buzón para que no se te olvide dónde y cuándo es.").classes(
+                    "text-sm w-full"
+                ).style("color: #C9D6CE")
+                with ui.row().classes("w-full gap-2 no-wrap"):
+                    ui.button("Listo", on_click=dialogo.close).props("flat no-caps").classes("fu-blanco flex-1")
+                    ui.button("Ver mi buzón", icon="inbox", on_click=lambda: ui.navigate.to("/buzon")).props(
+                        "unelevated no-caps"
+                    ).classes("fu-cta flex-1")
+                ui.button("¿Te equivocaste? Deshacer", icon="undo", on_click=deshacer).props(
+                    "flat no-caps dense"
+                ).classes("self-center").style("color: #C9D6CE")
+
+        dialogo.on("hide", dialogo.delete)  # se borra al cerrarse
+        dialogo.open()
+
+    def abrir_dialogo_salirse(
+        self,
+        aviso_id: int, capa: ui.element, persona_id: str | None, al_cambiar: Callable[[], None]
+    ) -> None:
+        aviso = self.gestor.obtener_aviso(aviso_id)
+        if aviso is None or not aviso.tiene_inscrito(persona_id):
+            ui.notify("Ya no estás anotado en este aviso.", type="info", position="top")
+            al_cambiar()
+            return
+        if aviso.cancelado:  # solo quitarlo del buzón: no hace falta preguntar
+            try:
+                self.gestor.salirse(aviso_id, persona_id)
+                ui.notify("Lo quitamos de tu buzón.", type="info", position="top")
+            except datos.ErrorValidacion as error:
+                ui.notify(str(error), type="negative", position="top")
+            al_cambiar()
+            return
+
+        def confirmar() -> None:
+            try:
+                actualizado = self.gestor.salirse(aviso_id, persona_id)
+            except datos.ErrorValidacion as error:
+                ui.notify(str(error), type="negative", position="top")
+                dialogo.close()
+                al_cambiar()
+                return
+            dialogo.close()
+            if actualizado.esta_abierto(ahora()):
+                mensaje = f"Te saliste de «{actualizado.titulo}». El aviso volvió a abrirse para que otra persona tome tu lugar."
+            else:
+                mensaje = f"Te saliste de «{actualizado.titulo}». Tu cupo quedó libre."
+            ui.notify(mensaje, type="info", position="top", multi_line=True)
+            al_cambiar()
+
+        with capa, ui.dialog() as dialogo, ui.card().classes("fu-card").style("width: 420px"):
+            ui.icon("logout", size="40px").classes("text-red-700 self-center")
+            ui.label("¿Salirte de este evento?").classes(
+                "fu-display text-2xl font-extrabold text-center w-full"
+            )
+            ui.label(aviso.titulo).classes("fu-gris font-semibold text-center w-full -mt-3")
+            ui.label(
+                "Tu cupo quedará libre. Si el aviso sigue dentro de su plazo, vuelve a aparecer "
+                "en el tablero para que otra persona lo tome. También se quitará de tu buzón."
+            ).classes("text-sm text-stone-600 text-center w-full")
+            with ui.row().classes("w-full gap-2 no-wrap"):
+                ui.button("No, me quedo", on_click=dialogo.close).props("flat no-caps").classes("fu-suave flex-1")
+                ui.button("Sí, salirme", on_click=confirmar).props("unelevated no-caps").classes("fu-peligro flex-1")
+
+        dialogo.on("hide", dialogo.delete)
+        dialogo.open()
+
+    def abrir_dialogo_eliminar(
+        self,
+        aviso_id: int,
+        capa: ui.element,
+        persona_id: str | None,
+        al_cambiar: Callable[[], None],
+        al_terminar: Callable[[], None] | None = None,
+        como_admin: bool = False,
+    ) -> None:
+        aviso = self.gestor.obtener_aviso(aviso_id)
+        permitido = aviso is not None and (
+            aviso.es_de(persona_id) or (como_admin and self.administracion.es_admin(persona_id))
         )
+        if not permitido or aviso.cancelado:
+            ui.notify("Este aviso ya no se puede eliminar.", type="info", position="top")
+            al_cambiar()
+            return
 
+        def confirmar() -> None:
+            try:
+                self.gestor.eliminar_aviso(aviso_id, persona_id, como_admin=como_admin)
+            except datos.ErrorValidacion as error:
+                ui.notify(str(error), type="negative", position="top")
+                dialogo.close()
+                al_cambiar()
+                return
+            dialogo.close()
+            ui.notify(f"Eliminaste «{aviso.titulo}».", type="info", position="top")
+            al_cambiar()
+            if al_terminar:
+                al_terminar()
 
-def _panel(persona_id: str | None, capa: ui.element) -> None:
-    def sigo_siendo_admin() -> bool:
-        if datos.es_admin(persona_id):
-            return True
-        ui.notify("Tu sesión de administración se cerró.", type="warning", position="top")
-        ui.navigate.to("/admin")
-        return False
+        n = len(aviso.inscritos)
+        if n:
+            consecuencia = (
+                f"{'La persona que se unió verá' if n == 1 else f'Las {n} personas que se unieron verán'} "
+                "en su buzón que el evento se canceló."
+            )
+        else:
+            consecuencia = "Nadie se ha unido todavía."
 
-    guia(
-        "Desde aquí cuidas la página: revisas las denuncias, decides qué palabras se filtran "
-        "y puedes eliminar cualquier aviso."
-    )
-    with ui.tabs().props("no-caps align=left").classes("fu-pestanas w-full") as pestanas:
-        p_resumen = ui.tab("Resumen", icon="insights")
-        n_denuncias = len(datos.denuncias_pendientes())
-        p_denuncias = ui.tab(f"Denuncias ({n_denuncias})" if n_denuncias else "Denuncias", icon="outlined_flag")
-        p_palabras = ui.tab("Palabras", icon="spellcheck")
-        p_bloqueados = ui.tab("Bloqueados", icon="block")
-        p_avisos = ui.tab("Avisos", icon="campaign")
+        with capa, ui.dialog() as dialogo, ui.card().classes("fu-card").style("width: 420px"):
+            ui.icon("delete_outline", size="40px").classes("text-red-700 self-center")
+            ui.label("¿Eliminar este aviso?").classes(
+                "fu-display text-2xl font-extrabold text-center w-full"
+            )
+            ui.label(aviso.titulo).classes("fu-gris font-semibold text-center w-full -mt-3")
+            donde = "del tablero y de tu buzón" if aviso.es_de(persona_id) else "del tablero y del buzón de su dueño"
+            ui.label(f"Desaparecerá {donde}. {consecuencia} No se puede deshacer.").classes(
+                "text-sm text-stone-600 text-center w-full"
+            )
+            with ui.row().classes("w-full gap-2 no-wrap"):
+                ui.button("No, mantenerlo", on_click=dialogo.close).props("flat no-caps").classes("fu-suave flex-1")
+                ui.button("Sí, eliminar", on_click=confirmar).props("unelevated no-caps").classes("fu-peligro flex-1")
 
-    with ui.tab_panels(pestanas, value=p_resumen).classes("w-full bg-transparent"):
-        # ------------------------------------------------------------ Resumen
-        with ui.tab_panel(p_resumen).classes("px-0 gap-4"):
+        dialogo.on("hide", dialogo.delete)
+        dialogo.open()
 
-            @ui.refreshable
-            def cifras() -> None:
-                c = datos.estadisticas()
-                tarjetas = [
-                    ("Avisos abiertos ahora", c["abiertos"], "campaign"),
-                    ("Publicados (7 días)", c["publicados_7d"], "add_circle_outline"),
-                    ("Personas unidas (7 días)", c["unidos_7d"], "group_add"),
-                    ("Bloqueos del filtro (7 días)", c["bloqueos_7d"], "block"),
-                    ("Avisos eliminados (7 días)", c["cancelados_7d"], "delete_outline"),
-                    ("Reglas propias del filtro", c["reglas"], "spellcheck"),
-                    ("Avisos con denuncias por revisar", c["denuncias_pendientes"], "outlined_flag"),
-                ]
-                with ui.row().classes("w-full gap-3"):
-                    for titulo, valor, icono in tarjetas:
-                        with ui.card().classes(
-                            "rounded-2xl shadow-none border border-stone-200 p-4 gap-1"
-                        ).style("flex: 1 1 150px; min-width: 150px"):
-                            ui.icon(icono, size="22px").classes("text-primary")
-                            ui.label(str(valor)).classes("fu-cifra")
-                            ui.label(titulo).classes("text-xs fu-gris")
-                ui.label(f"Avisos publicados desde el comienzo: {c['avisos_total']}").classes(
-                    "text-sm fu-gris"
-                )
+    def abrir_dialogo_denunciar(
+        self,
+        aviso_id: int, capa: ui.element, persona_id: str | None, al_cambiar: Callable[[], None]
+    ) -> None:
+        aviso = self.gestor.obtener_aviso(aviso_id)
+        if aviso is None or aviso.cancelado:
+            ui.notify("Este aviso ya no está disponible.", type="info", position="top")
+            al_cambiar()
+            return
+        if aviso.es_de(persona_id):
+            ui.notify("No puedes denunciar tu propio aviso.", type="info", position="top")
+            return
 
-            cifras()
+        def enviar() -> None:
+            try:
+                self.gestor.denunciar(aviso_id, persona_id, motivo.value, comentario.value)
+            except datos.ErrorValidacion as error:
+                ui.notify(str(error), type="negative", position="top")
+                if "ya denunciaste" in str(error).lower():
+                    dialogo.close()
+                return
+            dialogo.close()
+            ui.notify("Gracias. La administración revisará este aviso.", type="positive", position="top")
+            al_cambiar()
 
-            def cerrar_sesion() -> None:
-                datos.quitar_admin(persona_id)
-                ui.navigate.to("/admin")
+        with capa, ui.dialog() as dialogo, ui.card().classes("fu-card").style("width: 440px"):
+            ui.icon("outlined_flag", size="40px").classes("text-red-700 self-center")
+            ui.label("Denunciar aviso").classes("fu-display text-2xl font-extrabold text-center w-full")
+            ui.label(aviso.titulo).classes("fu-gris font-semibold text-center w-full -mt-3")
+            ui.label("¿Qué pasa con este aviso?").classes("text-sm font-semibold text-stone-700")
+            motivo = ui.radio(datos.MOTIVOS_DENUNCIA, value=None).classes("w-full -mt-2")
+            comentario = ui.textarea("Cuéntanos más (opcional)").props(
+                f"outlined autogrow maxlength={datos.LARGO_MAX_DENUNCIA}"
+            ).classes("w-full")
+            ui.label("Quien publicó el aviso no sabrá quién lo denunció.").classes("text-xs text-stone-500")
+            with ui.row().classes("w-full gap-2 no-wrap"):
+                ui.button("Cancelar", on_click=dialogo.close).props("flat no-caps").classes("fu-suave flex-1")
+                ui.button("Enviar denuncia", on_click=enviar).props("unelevated no-caps").classes("fu-peligro flex-1")
 
-            def cerrar_todas() -> None:
-                n = datos.quitar_todos_los_admin()
-                ui.notify(f"Se cerraron {n} sesiones de administración.", type="info", position="top")
-                ui.navigate.to("/admin")
+        dialogo.on("hide", dialogo.delete)
+        dialogo.open()
 
-            with ui.row().classes("w-full justify-between"):
-                ui.button("Actualizar", icon="refresh", on_click=cifras.refresh).props(
-                    "flat rounded no-caps color=grey-9"
-                )
-                ui.button("Cerrar sesión de administración", icon="logout", on_click=cerrar_sesion).props(
-                    "flat rounded no-caps color=red-8"
-                )
-            ui.button(
-                "Cerrar la sesión de administración en todos los navegadores",
-                icon="phonelink_lock",
-                on_click=cerrar_todas,
-            ).props("flat rounded no-caps dense color=red-8").classes("self-end")
-            ui.label(
-                "Úsalo si entraste desde un computador ajeno o si cambiaste la clave."
-            ).classes("text-xs text-stone-400 self-end -mt-3")
+    def abrir_dialogo_crear(
+        self,
+        capa: ui.element, base_url: str, persona_id: str | None, al_cambiar: Callable[[], None]
+    ) -> None:
+        momento = ahora()
+        sugerida = (momento + timedelta(hours=2)).replace(minute=0, second=0, microsecond=0)
 
-        # ------------------------------------------------------------ Denuncias
-        with ui.tab_panel(p_denuncias).classes("px-0 gap-4"):
-            ui.label(
-                f"Con {datos.UMBRAL_DENUNCIAS} denuncias de personas distintas, un aviso se oculta "
-                "del tablero hasta que lo revises."
-            ).classes("text-sm fu-gris")
+        with capa, ui.dialog().props("persistent") as dialogo, ui.card().classes(
+            "fu-card fu-gris-fondo fu-pantalla"
+        ).style("width: 580px"):
+            cuerpo = ui.column().classes("w-full gap-3")
 
-            def tras_moderar() -> None:
-                lista_denuncias.refresh()
-                lista_avisos.refresh()
-                cifras.refresh()
+        # Ubicación exacta (opcional), elegida en el selector a pantalla completa.
+        # "texto_auto" es lo que escribimos nosotros en «Lugar» (desde el mapa): eso
+        # se puede reemplazar; lo que escribió la persona, nunca. "turno" deja valer
+        # solo la última elección si llegan dos respuestas.
+        ubicacion: dict = {"lat": None, "lng": None, "texto_auto": None, "turno": 0, "direccion": None}
+        vista: dict = {"direccion": None}
 
-            def descartar(aviso_id: int) -> None:
-                if not sigo_siendo_admin():
-                    return
-                datos.descartar_denuncias(aviso_id)
-                ui.notify("Denuncias descartadas. El aviso se ve normal otra vez.", type="info", position="top")
-                tras_moderar()
+        def escrito_por_la_persona() -> bool:
+            texto = (campo_lugar.value or "").strip()
+            return bool(texto) and texto != ubicacion["texto_auto"]
 
-            @ui.refreshable
-            def lista_denuncias() -> None:
-                momento = ahora()
-                pendientes = datos.denuncias_pendientes()
-                if not pendientes:
-                    ui.label("No hay denuncias por revisar.").classes("fu-gris")
-                for aviso, denuncias in pendientes:
-                    with tarjeta_simple():
-                        with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
-                            ui.label(aviso.titulo).classes(
-                                "fu-display text-xl leading-snug cursor-pointer hover:underline"
-                            ).on("click", partial(ui.navigate.to, f"/aviso/{aviso.id}"))
-                            n = len(denuncias)
-                            etiqueta(f"{n} denuncia{'s' if n != 1 else ''}", "outlined_flag", rojo=True)
-                        if n >= datos.UMBRAL_DENUNCIAS and not aviso.cancelado:
-                            ui.label("Oculto del tablero mientras lo revisas.").classes(
-                                "text-sm font-semibold text-red-800"
+        def abrir_selector() -> None:
+            abrir_selector_ubicacion(
+                capa,
+                buscador=self.buscador,
+                lat=ubicacion["lat"],
+                lng=ubicacion["lng"],
+                consulta=(campo_lugar.value or "").strip() if escrito_por_la_persona() else "",
+                al_confirmar=al_elegir_punto,
+            )
+
+        def pintar_ubicacion() -> None:
+            caja_ubicacion.clear()
+            vista["direccion"] = None
+            with caja_ubicacion:
+                if ubicacion["lat"] is None:
+                    with ui.row().classes(
+                        "w-full items-center gap-3 no-wrap rounded-2xl border-2 border-dashed border-stone-300 "
+                        "px-3 py-3 cursor-pointer hover:border-green-800"
+                    ).on("click", abrir_selector):
+                        with ui.element("div").classes("fu-avatar fu-avatar-yo"):
+                            ui.icon("add_location_alt", size="22px")
+                        with ui.column().classes("gap-0 flex-1 min-w-0"):
+                            ui.label("Marcar en el mapa").classes("font-semibold text-stone-900 leading-tight")
+                            ui.label("Opcional · así «Cómo llegar» lleva al punto exacto").classes(
+                                "text-xs text-stone-500"
                             )
-                        ui.label(
-                            f"{aviso.lugar} · {texto_fecha_evento(aviso.inicio_evento, momento)}"
-                        ).classes("text-sm fu-gris")
-                        if aviso.descripcion:
-                            ui.label(aviso.descripcion).classes("text-sm fu-gris line-clamp-3")
-                        for motivo_txt, cantidad in Counter(d.nombre_motivo for d in denuncias).most_common():
-                            ui.label(f"• {motivo_txt} ({cantidad})").classes("text-sm ")
-                        for d in denuncias:
-                            if d.comentario:
-                                ui.label(f"“{d.comentario}”").classes("text-sm italic fu-gris")
-                        with ui.row().classes("gap-2"):
-                            if not aviso.cancelado:
-                                ui.button(
-                                    "Eliminar aviso",
-                                    icon="delete_outline",
-                                    on_click=partial(
-                                        abrir_dialogo_eliminar, aviso.id, capa, persona_id, tras_moderar,
-                                        como_admin=True,
-                                    ),
-                                ).props("unelevated rounded no-caps color=red-8")
-                            ui.button(
-                                "Descartar denuncias", icon="done", on_click=partial(descartar, aviso.id)
-                            ).props("flat rounded no-caps color=grey-9")
+                        ui.icon("chevron_right", size="22px").classes("text-stone-400 shrink-0")
+                    return
+                dibujo = mapa_de_vista(ubicacion["lat"], ubicacion["lng"], alto="8.5rem", controles=False)
+                if dibujo:
+                    dibujo[1].on("map-click", abrir_selector)  # tocar la vista previa = cambiar
+                with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                    ui.icon("check_circle", size="20px").classes("text-primary shrink-0")
+                    with ui.column().classes("gap-0 flex-1 min-w-0"):
+                        ui.label("Ubicación marcada").classes("text-sm font-semibold text-stone-900 leading-tight")
+                        vista["direccion"] = ui.label(ubicacion["direccion"] or "Punto marcado en el mapa").classes(
+                            "text-xs text-stone-500 ellipsis"
+                        )
+                    ui.button("Cambiar", on_click=abrir_selector).props("flat no-caps").classes("fu-suave")
+                    ui.button("Quitar", on_click=quitar_ubicacion).props("flat no-caps").classes("fu-peligro")
 
-            lista_denuncias()
+        async def al_elegir_punto(lat: float, lng: float, lugar) -> None:
+            ubicacion.update(lat=lat, lng=lng)
+            ubicacion["turno"] += 1
+            turno = ubicacion["turno"]
+            if lugar is not None:  # eligió un resultado de la búsqueda
+                ubicacion["direccion"] = lugar.nombre + (f" · {lugar.detalle_corto}" if lugar.detalle_corto else "")
+                if not escrito_por_la_persona():
+                    campo_lugar.value = lugar.texto
+                    ubicacion["texto_auto"] = lugar.texto
+                pintar_ubicacion()
+                return
+            ubicacion["direccion"] = "Buscando la dirección…"
+            pintar_ubicacion()
+            try:
+                texto = await asyncio.to_thread(self.buscador.direccion_de, lat, lng)
+            except Exception:
+                texto = None
+            if turno != ubicacion["turno"]:  # ya eligió otro punto o lo quitó
+                return
+            ubicacion["direccion"] = f"Cerca de {texto}" if texto else "Punto marcado en el mapa"
+            try:
+                if texto and not escrito_por_la_persona():
+                    campo_lugar.value = texto
+                    ubicacion["texto_auto"] = texto
+                if vista["direccion"] is not None:
+                    vista["direccion"].text = ubicacion["direccion"]
+            except Exception:  # el formulario se cerró mientras buscábamos
+                pass
 
-        # ------------------------------------------------------------ Palabras
-        with ui.tab_panel(p_palabras).classes("px-0 gap-4"):
-            with tarjeta_simple():
-                ui.label("Agregar palabra o frase al filtro").classes("fu-display text-xl")
-                ui.label(
-                    "Se aplica al instante en toda la página, sin volver a publicar el código."
-                ).classes("text-sm fu-gris -mt-2")
-                campo_palabra = ui.input("Palabra o frase", placeholder="Ej: pico").props(
-                    f"outlined maxlength={datos.LARGO_MAX_REGLA}"
-                ).classes("w-full")
-                modo = ui.toggle(
-                    {"contexto": "Solo en contexto inadecuado", "siempre": "Siempre"},
-                    value="contexto",
-                    on_change=lambda: campo_cerca.set_visibility(modo.value == "contexto"),
-                ).props("spread no-caps unelevated rounded toggle-color=primary color=grey-3 text-color=grey-9").classes(
-                    "w-full"
+        def quitar_ubicacion() -> None:
+            ubicacion.update(lat=None, lng=None, direccion=None)
+            ubicacion["turno"] += 1  # descarta una dirección que venía en camino
+            pintar_ubicacion()
+
+        def actualizar_valor() -> None:
+            con_costo = campo_cobro.value == "pago"
+            campo_valor.set_visibility(con_costo)
+            # Solo números y puntos: cualquier otra cosa se borra al escribirla.
+            texto = campo_valor.value or ""
+            limpio = "".join(c for c in texto if c in "0123456789.")
+            if limpio != texto:
+                campo_valor.value = limpio
+            vista_valor.set_visibility(con_costo)
+            try:
+                monto = datos.parsear_valor(limpio) if con_costo and limpio else None
+            except datos.ErrorValidacion:
+                monto = None
+            vista_valor.text = f"Se mostrará como: {datos.texto_valor(monto)}" if monto else ""
+
+        def actualizar_resumen() -> None:
+            """Vista previa en vivo: así se verán los cupos en el tablero."""
+            actuales, necesarias = campo_actuales.value, campo_necesarias.value
+            caja_previa.clear()
+            if actuales and necesarias and necesarias > actuales:
+                faltan = int(necesarias - actuales)
+                resumen.text = f"Buscan {faltan} persona{'s' if faltan != 1 else ''} más."
+                dibujados = min(int(necesarias), self.MAX_CUPOS_DIBUJADOS * 2)
+                ocupados = min(int(actuales), dibujados - 1)
+                with caja_previa:
+                    for i in range(dibujados):
+                        ui.element("div").classes("fu-cupo " + ("fu-cupo-cara" if i < ocupados else "fu-cupo-libre")).style(
+                            f"background-color: {colores_de(campo_categoria.value)[0]}" if i < ocupados else ""
+                        )
+            else:
+                resumen.text = ""
+                with caja_previa:
+                    ui.label("Elige cuántos son y cuántos necesitan para ver cómo quedará.").classes("text-sm").style(
+                        "color: #C9D6CE"
+                    )
+
+        def paso(campo, cambio: int, minimo: int, maximo: int) -> None:
+            """Botones − y + de «¿Cuántos son?» y «¿Cuántos necesitan?»."""
+            actual = campo.value
+            nuevo = minimo if actual is None else max(minimo, min(maximo, int(actual) + cambio))
+            campo.set_value(nuevo)
+            # «necesitan» siempre va al menos uno por encima de «son»
+            if campo is campo_actuales and (campo_necesarias.value is None or campo_necesarias.value <= nuevo):
+                campo_necesarias.set_value(min(nuevo + 1, self.gestor.MAX_PERSONAS))
+
+        def elegir_categoria(clave: str) -> None:
+            campo_categoria.value = clave
+            pintar_categorias()
+            actualizar_resumen()
+
+        def pintar_categorias() -> None:
+            caja_categorias.clear()
+            with caja_categorias:
+                for clave, nombre in self.gestor.CATEGORIAS.items():
+                    activo = clave == campo_categoria.value
+                    with ui.button(on_click=partial(elegir_categoria, clave)).props("flat no-caps").classes(
+                        "fu-chip " + ("fu-chip-activo" if activo else "fu-chip-suave")
+                    ):
+                        ui.element("div").classes("fu-punto").style(
+                            f"background: {AMARILLO if activo else colores_de(clave)[0]}"
+                        )
+                        ui.label(nombre)
+
+        def publicar() -> None:
+            try:
+                inicio = datos.armar_fecha_hora(campo_fecha.value, campo_hora.value)
+                aviso = self.gestor.crear_aviso(
+                    titulo=campo_titulo.value,
+                    categoria=campo_categoria.value,
+                    lugar=campo_lugar.value,
+                    inicio_evento=inicio,
+                    personas_actuales=campo_actuales.value,
+                    personas_necesarias=campo_necesarias.value,
+                    duracion_horas=campo_duracion.value,
+                    descripcion=campo_descripcion.value,
+                    creador_id=persona_id,
+                    lat=ubicacion["lat"],
+                    lng=ubicacion["lng"],
+                    valor=0 if campo_cobro.value == "gratis" else campo_valor.value,
                 )
-                campo_cerca = ui.input(
-                    "Se filtra si aparece cerca de… (separa con comas)",
-                    placeholder="Ej: chupa, chupen, mi, tu",
-                ).props("outlined").classes("w-full")
-                campo_excepto = ui.input(
-                    "Nunca se filtra en… (opcional, separa con comas)",
-                    placeholder="Ej: y pico, pico de",
-                ).props("outlined").classes("w-full")
-                ui.label(
-                    f"«Cerca» significa hasta {filtro.VENTANA} palabras antes o después. "
-                    "Las excepciones siempre ganan. Mayúsculas, tildes y trucos como p1c0 se detectan igual."
-                ).classes("text-xs fu-gris")
+            except datos.ErrorValidacion as error:
+                ui.notify(str(error), type="negative", position="top")
+                return
+            al_cambiar()
+            mostrar_exito(aviso)
 
-                def agregar() -> None:
+        def mostrar_exito(aviso: datos.Aviso) -> None:
+            enlace = f"{base_url}/aviso/{aviso.id}"
+            tablero = "se completa el grupo"
+            if aviso.cierra_en < aviso.expira_en:
+                tablero += " o llega la hora del evento"
+            cuerpo.clear()
+            with cuerpo:
+                ui.label("¡Aviso publicado!").classes("fu-display text-4xl font-extrabold w-full leading-none mt-4")
+                ui.label(
+                    f"Lo verás en tu buzón durante {aviso.duracion_horas} horas, aunque se llene. "
+                    f"Del tablero público sale cuando {tablero}."
+                ).classes("fu-gris w-full")
+                with ui.column().classes("fu-seccion"):
+                    ui.label("Compártelo por WhatsApp o donde quieras:").classes("text-sm font-semibold")
+                    ui.input(value=enlace).props("outlined dense readonly").classes("w-full")
+                with ui.row().classes("w-full gap-2 no-wrap"):
+                    ui.button("Listo", on_click=dialogo.close).props("flat no-caps").classes("fu-blanco flex-1")
+                    ui.button("Ver mi buzón", icon="inbox", on_click=lambda: ui.navigate.to("/buzon")).props(
+                        "unelevated no-caps"
+                    ).classes("fu-cta flex-1")
+                ui.button(
+                    "¿Te equivocaste? Eliminar este aviso",
+                    icon="delete_outline",
+                    on_click=lambda: self.abrir_dialogo_eliminar(
+                        aviso.id, capa, persona_id, al_cambiar, al_terminar=dialogo.close
+                    ),
+                ).props("flat no-caps dense color=red-9").classes("self-center")
+
+        OPCIONES = "spread no-caps unelevated toggle-color=dark color=grey-2 text-color=dark toggle-text-color=white"
+
+        with cuerpo:
+            with ui.row().classes("w-full items-center justify-between no-wrap px-1"):
+                ui.label("Nuevo aviso").classes("fu-display text-3xl font-extrabold")
+                ui.button(icon="close", on_click=dialogo.close).props("flat round").classes("fu-blanco")
+
+            # ¿Qué van a hacer?
+            with ui.column().classes("fu-seccion"):
+                ui.label("¿Qué van a hacer?").classes("fu-display text-xl")
+                ui.label("Elige una categoría y ponle un título claro").classes("fu-mano -mt-2")
+                caja_categorias = ui.row().classes("w-full gap-2")
+                campo_categoria = ui.select(self.gestor.CATEGORIAS, label="Categoría", value="futbol")
+                campo_categoria.set_visibility(False)  # se elige con los botones de arriba
+                pintar_categorias()
+                campo_titulo = ui.input(
+                    "Título", placeholder="Ej: Pichanga 7 vs 7, falta uno", validation=SIN_GROSERIAS
+                ).props(f"outlined maxlength={self.gestor.LARGO_TITULO[1]}").classes("w-full")
+
+            # ¿Cuántos son?
+            with ui.column().classes("fu-seccion"):
+                ui.label("¿Cuántos son?").classes("fu-display text-xl")
+                ui.label(f"Cuenta a todos, contigo incluido (máximo {self.gestor.MAX_PERSONAS})").classes("fu-mano -mt-2")
+                with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
+                    ui.label("Ya somos").classes("font-extrabold")
+                    with ui.element("div").classes("fu-paso"):
+                        ui.button("−", on_click=lambda: paso(campo_actuales, -1, 1, self.gestor.MAX_PERSONAS - 1)).props(
+                            "flat aria-label=\"Uno menos\""
+                        )
+                        campo_actuales = ui.number(
+                            "¿Cuántos son?",
+                            placeholder="9",
+                            min=1,
+                            max=self.gestor.MAX_PERSONAS - 1,
+                            step=1,
+                            format="%d",
+                            on_change=actualizar_resumen,
+                        ).props("borderless dense")
+                        ui.button("+", on_click=lambda: paso(campo_actuales, 1, 1, self.gestor.MAX_PERSONAS - 1)).props(
+                            "flat aria-label=\"Uno más\""
+                        )
+                with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
+                    ui.label("Necesitamos en total").classes("font-extrabold")
+                    with ui.element("div").classes("fu-paso"):
+                        ui.button("−", on_click=lambda: paso(campo_necesarias, -1, 2, self.gestor.MAX_PERSONAS)).props(
+                            "flat aria-label=\"Uno menos\""
+                        )
+                        campo_necesarias = ui.number(
+                            "¿Cuántos necesitan?",
+                            placeholder="10",
+                            min=2,
+                            max=self.gestor.MAX_PERSONAS,
+                            step=1,
+                            format="%d",
+                            on_change=actualizar_resumen,
+                        ).props("borderless dense")
+                        ui.button("+", on_click=lambda: paso(campo_necesarias, 1, 2, self.gestor.MAX_PERSONAS)).props(
+                            "flat aria-label=\"Uno más\""
+                        )
+                with ui.column().classes("fu-previa w-full gap-3"):
+                    ui.label("Así lo verán en el tablero").classes("fu-mano")
+                    resumen = ui.label("").classes("fu-display fu-falta")
+                    caja_previa = ui.row().classes("fu-cupos")
+                actualizar_resumen()
+
+            # ¿Dónde y cuándo?
+            with ui.column().classes("fu-seccion"):
+                ui.label("¿Dónde y cuándo?").classes("fu-display text-xl")
+                ui.label("Mientras más exacto, más fácil llegar").classes("fu-mano -mt-2")
+                campo_lugar = ui.input(
+                    "Lugar", placeholder="Ej: Cancha del liceo, Parque Chuyaca", validation=SIN_GROSERIAS
+                ).props(
+                    f"outlined maxlength={datos.LARGO_LUGAR[1]}"
+                ).classes("w-full")
+                caja_ubicacion = ui.column().classes("w-full gap-2")
+                pintar_ubicacion()
+                with ui.row().classes("w-full gap-3 no-wrap"):
+                    campo_fecha = ui.input("Fecha", value=sugerida.strftime("%Y-%m-%d")).props(
+                        f"outlined stack-label type=date min={momento:%Y-%m-%d}"
+                    ).classes("flex-1")
+                    campo_hora = ui.input("Hora", value=sugerida.strftime("%H:%M")).props(
+                        "outlined stack-label type=time"
+                    ).classes("flex-1")
+
+            # Valor, detalles y duración
+            with ui.column().classes("fu-seccion"):
+                ui.label("¿Cuánto cuesta por persona?").classes("fu-display text-xl")
+                campo_cobro = ui.toggle(
+                    {"gratis": "Gratis ($0)", "pago": "Tiene costo"},
+                    value="gratis",
+                    on_change=lambda: actualizar_valor(),
+                ).props(OPCIONES).classes("fu-opciones w-full")
+                campo_valor = ui.input(
+                    "Valor por persona",
+                    placeholder="Ej: 2.000",
+                    on_change=lambda: actualizar_valor(),
+                    validation=VALOR_EN_PESOS,
+                ).props("outlined prefix=$ suffix=CLP inputmode=numeric maxlength=7").classes("w-full")
+                vista_valor = ui.label("").classes("fu-gris text-xs -mt-2")
+                campo_valor.set_visibility(False)
+
+                campo_descripcion = ui.textarea(
+                    "Detalles (opcional)",
+                    placeholder="Ej: Se paga la cancha entre todos. Traer polera oscura.",
+                    validation=SIN_GROSERIAS,
+                ).props(f"outlined autogrow maxlength={self.gestor.LARGO_MAX_DESCRIPCION}").classes("w-full")
+
+                ui.label("¿Cuánto dura el aviso?").classes("fu-display text-xl")
+                campo_duracion = ui.toggle({24: "24 horas", 48: "48 horas"}, value=24).props(OPCIONES).classes(
+                    "fu-opciones w-full"
+                )
+                ui.label(
+                    "En el tablero se cierra antes si se completa el grupo o llega la hora del evento. "
+                    "En tu buzón lo verás durante todo el plazo."
+                ).classes("fu-gris text-xs")
+
+            ui.button("Publicar aviso", on_click=publicar).props("unelevated no-caps").classes(
+                "fu-cta fu-grande w-full"
+            )
+
+        dialogo.on("hide", dialogo.delete)
+        dialogo.open()
+
+    # ------------------------------------------------------------------ #
+    # Páginas
+    # ------------------------------------------------------------------ #
+
+    def pagina_inicio(self, request: Request):
+        dispositivo = dispositivo_de(request)
+        persona_id = self.acceso.persona_de(dispositivo)
+        if persona_id is None:
+            return self._a_ingresar("/")
+        preparar_pagina()
+        base_url = URL_PUBLICA or str(request.base_url).rstrip("/")
+        capa = ui.element("div")  # los diálogos viven aquí, fuera de la lista que se redibuja
+        estado: dict = {"categoria": None, "firma": None}
+
+        def refrescar() -> None:
+            lista.refresh()
+            cifras.refresh()
+            actualizar_contador()
+
+        @ui.refreshable
+        def cifras() -> None:
+            """Marcador de la portada: avisos abiertos, cupos libres y cuántos cierran hoy."""
+            momento = ahora()
+            activos = self.gestor.avisos_activos(momento)
+            hoy = sum(1 for a in activos if a.cierra_en.date() == momento.date())
+            for numero, texto in (
+                (len(activos), "aviso abierto" if len(activos) == 1 else "avisos abiertos"),
+                (sum(a.cupos_libres for a in activos), "cupos libres"),
+                (hoy, "cierra hoy" if hoy == 1 else "cierran hoy"),
+            ):
+                with ui.element("div").classes("fu-cifra-caja"):
+                    ui.label(str(numero)).classes("fu-cifra")
+                    ui.label(texto).classes("fu-cifra-texto")
+
+        def elegir_categoria(clave: str | None) -> None:
+            estado["categoria"] = clave
+            lista.refresh()
+
+        def chip(texto: str, cantidad: int, activo: bool, al_tocar, color: str | None = None) -> None:
+            with ui.button(texto, on_click=al_tocar).props("flat no-caps").classes(
+                "fu-chip" + (" fu-chip-activo" if activo else "")
+            ):
+                ui.label(str(cantidad)).classes("fu-cuenta")
+
+        al_unirse = partial(self.abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+        al_salirse = partial(self.abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+        al_eliminar = partial(self.abrir_dialogo_eliminar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+        al_denunciar = partial(self.abrir_dialogo_denunciar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+
+        @ui.refreshable
+        def lista() -> None:
+            momento = ahora()
+            activos = self.gestor.avisos_activos(momento)
+            estado["firma"] = firma(activos, momento)
+
+            elegida = estado["categoria"]
+            visibles = [a for a in activos if elegida in (None, a.categoria)]
+
+            if activos or elegida:
+                conteo = Counter(a.categoria for a in activos)
+                with ui.row().classes("w-full gap-2 no-wrap overflow-x-auto pb-1 md:flex-wrap"):
+                    chip("Todos", len(activos), elegida is None, partial(elegir_categoria, None))
+                    for clave, nombre in self.gestor.CATEGORIAS.items():
+                        if conteo[clave] or clave == elegida:
+                            chip(
+                                nombre,
+                                conteo[clave],
+                                clave == elegida,
+                                partial(elegir_categoria, clave),
+                            )
+
+            if not visibles:
+                with ui.column().classes("w-full items-center text-center py-16 gap-2"):
+                    ui.image(LOGO_URL).props("no-spinner no-transition").classes("w-16 h-16")
+                    if elegida:
+                        ui.label(f"No hay avisos abiertos de {self.gestor.CATEGORIAS[elegida]}").classes(
+                            "fu-display text-2xl font-bold"
+                        )
+                    else:
+                        ui.label("No hay avisos abiertos").classes("fu-display text-2xl font-bold")
+                    ui.label("¿Te falta gente para algo? Publica el primero con «Crear aviso».").classes("fu-gris")
+                return
+
+            with ui.element("div").classes("fu-rejilla"):
+                for aviso in visibles:
+                    self.tarjeta_aviso(aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, al_denunciar)
+
+        def revisar_cambios() -> None:
+            if not self._sigue_la_sesion(dispositivo, persona_id, "/"):
+                return
+            momento = ahora()
+            if firma(self.gestor.avisos_activos(momento), momento) != estado["firma"]:
+                lista.refresh()
+                cifras.refresh()
+            actualizar_contador()
+
+        def crear() -> None:
+            self.abrir_dialogo_crear(capa, base_url, persona_id, refrescar)
+
+        actualizar_contador, dentro = self._portada(persona_id, dispositivo)
+        with dentro, ui.element("div").classes("fu-portada-fila"):
+            with ui.column().classes("gap-0"):
+                ui.label("¿A quién le falta uno hoy?").classes("fu-display fu-hero")
+                ui.label(
+                    "Avisos de eventos de la Universidad de Los Lagos. ¿Falta gente para la pichanga, "
+                    "el grupo de estudio o la junta del viernes? Publícalo, o súmate a uno con un toque."
+                ).classes("fu-portada-texto")
+                # En el computador el botón va aquí; en el celular, fijo abajo
+                ui.button("Crear aviso", icon="add", on_click=crear).props("unelevated no-caps").classes(
+                    "fu-cta fu-grande fu-solo-pc mt-5 self-start"
+                )
+            with ui.element("div").classes("fu-cifras"):
+                cifras()
+
+        with ui.element("div").classes("fu-contenedor"):
+            como_funciona(abierto=not self.gestor.avisos_activos(ahora()))
+            lista()
+
+        with ui.element("div").classes("fu-fab"):
+            ui.button("Crear aviso", icon="add", on_click=crear).props("unelevated no-caps").classes(
+                "fu-cta fu-grande"
+            )
+
+        ui.timer(self.SEGUNDOS_ENTRE_REVISIONES, revisar_cambios)
+
+    def pagina_aviso(self, aviso_id: int, request: Request):
+        dispositivo = dispositivo_de(request)
+        persona_id = self.acceso.persona_de(dispositivo)
+        if persona_id is None:
+            return self._a_ingresar(f"/aviso/{aviso_id}")
+        preparar_pagina()
+        soy_admin = self.administracion.es_admin(persona_id)
+        capa = ui.element("div")
+        estado: dict = {"firma": None, "comentarios": None}
+
+        def refrescar() -> None:
+            contenido.refresh()
+            lista_comentarios.refresh()
+            actualizar_contador()
+
+        al_unirse = partial(self.abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+        al_salirse = partial(self.abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+        al_eliminar = partial(self.abrir_dialogo_eliminar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+        al_denunciar = partial(self.abrir_dialogo_denunciar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+
+        def leer() -> tuple[datos.Aviso | None, tuple | None]:
+            momento = ahora()
+            aviso = self.gestor.obtener_aviso(aviso_id)
+            return aviso, (firma([aviso], momento) if aviso else None)
+
+        @ui.refreshable
+        def contenido() -> None:
+            momento = ahora()
+            aviso, estado["firma"] = leer()
+
+            if aviso is None:
+                with ui.column().classes("w-full items-center text-center py-16 gap-2"):
+                    ui.icon("search_off", size="48px").classes("fu-gris")
+                    ui.label("Este aviso no existe").classes("fu-display text-2xl font-bold")
+                return
+
+            motivo = aviso.motivo_cierre(momento)
+            if motivo:
+                aviso_de_cierre(aviso, motivo)
+            self.tarjeta_aviso(
+                aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, al_denunciar, modo="detalle"
+            )
+
+        # ------------------------------------------------------------ comentarios
+        def borrar_comentario(comentario_id: int) -> None:
+            try:
+                self.gestor.borrar_comentario(comentario_id, persona_id, como_admin=soy_admin)
+            except datos.ErrorValidacion as error:
+                ui.notify(str(error), type="negative", position="top")
+            lista_comentarios.refresh()
+
+        @ui.refreshable
+        def lista_comentarios() -> None:
+            aviso = self.gestor.obtener_aviso(aviso_id)
+            if aviso is None:
+                return
+            estado["comentarios"] = aviso.comentarios
+            momento = ahora()
+            comentarios = self.gestor.comentarios_de(aviso_id)
+            ui.label(f"Comentarios ({len(comentarios)})").classes("fu-display text-xl font-bold")
+            if not comentarios:
+                ui.label("Todavía no hay comentarios. ¿Tienes una pregunta? Escríbela aquí abajo.").classes(
+                    "text-sm text-stone-500"
+                )
+            for c in comentarios:
+                del_dueno = aviso.es_de(c.persona_id)
+                mio = bool(persona_id) and c.persona_id == persona_id
+                nombre = "Quien organiza" if del_dueno else (c.nombre or "Anónimo")
+                with ui.row().classes("w-full items-start gap-2.5 no-wrap"):
+                    color = "fu-avatar-organiza" if del_dueno else ("fu-avatar-yo" if mio else "")
+                    ui.label(iniciales(nombre)).classes(f"fu-avatar {color}")
+                    with ui.column().classes("fu-burbuja gap-0"):
+                        with ui.row().classes("items-baseline gap-2 no-wrap"):
+                            ui.label(nombre + (" (tú)" if mio else "")).classes("font-bold text-sm")
+                            ui.label(texto_hace(c.momento, momento)).classes("fu-gris text-xs")
+                        ui.label(c.texto).classes("break-words")
+                    ui.element("div").classes("grow")
+                    if mio or soy_admin:
+                        ui.button(icon="close", on_click=partial(borrar_comentario, c.id)).props(
+                            "flat round dense size=sm color=grey-6"
+                        ).tooltip("Borrar comentario")
+
+        def revisar_cambios() -> None:
+            if not self._sigue_la_sesion(dispositivo, persona_id, f"/aviso/{aviso_id}"):
+                return
+            aviso, nueva_firma = leer()
+            if nueva_firma != estado["firma"]:
+                contenido.refresh()
+            if aviso is not None and aviso.comentarios != estado["comentarios"]:
+                lista_comentarios.refresh()
+            actualizar_contador()
+
+        actualizar_contador, _ = self._portada(persona_id, dispositivo)
+        with ui.element("div").classes("fu-contenedor"):
+            volver_al_tablero()
+            aviso_inicial = self.gestor.obtener_aviso(aviso_id)
+            # En el computador: el aviso a la izquierda; el mapa y los comentarios a la derecha
+            with ui.element("div").classes("fu-dos" if aviso_inicial is not None else "fu-columna"):
+                with ui.element("div").classes("fu-columna"):
+                    contenido()
+                with ui.element("div").classes("fu-columna"):
+                    if aviso_inicial is not None and aviso_inicial.tiene_ubicacion and not aviso_inicial.cancelado:
+                        with ui.card().classes("fu-card w-full"):
+                            ui.label("Ubicación").classes("fu-display text-xl font-bold")
+                            mapa_de_vista(aviso_inicial.lat, aviso_inicial.lng)
+                            with ui.row().classes("w-full items-center justify-between gap-3"):
+                                ui.label(aviso_inicial.lugar).classes("font-semibold min-w-0 flex-1")
+                                ui.link("Cómo llegar", url_mapa_de(aviso_inicial), new_tab=True).classes(
+                                    ESTILO_ACCION + " fu-llegar shrink-0"
+                                )
+                    if aviso_inicial is not None:
+                        with ui.card().classes("fu-card w-full"):
+                            lista_comentarios()
+                            if not aviso_inicial.cancelado:
+                                self._formulario_comentario(
+                                    aviso_inicial, persona_id, self.acceso.nombre_en(dispositivo),
+                                    lista_comentarios.refresh,
+                                )
+
+        ui.timer(self.SEGUNDOS_ENTRE_REVISIONES, revisar_cambios)
+
+    def _formulario_comentario(
+        self, aviso: datos.Aviso, persona_id: str | None, nombre: str, al_comentar: Callable[[], None]
+    ) -> None:
+        """Formulario fuera de la lista que se redibuja, para no perder lo que se está escribiendo."""
+        ui.separator().classes("my-1")
+        if aviso.es_de(persona_id):
+            ui.label("Comentas como quien organiza.").classes("fu-gris text-xs")
+        else:
+            ui.label(f"Comentas como {nombre}.").classes("fu-gris text-xs")
+        with ui.row().classes("w-full items-start gap-2 no-wrap"):
+            campo_texto = ui.input(
+                "Escribe un comentario…", placeholder="Ej: ¿Se paga la cancha?", validation=SIN_GROSERIAS
+            ).props(f"outlined dense rounded maxlength={datos.LARGO_MAX_COMENTARIO} counter").classes("grow")
+
+            def enviar() -> None:
+                try:
+                    self.gestor.comentar(aviso.id, persona_id, campo_texto.value)
+                except datos.ErrorValidacion as error:
+                    ui.notify(str(error), type="negative", position="top")
+                    return
+                campo_texto.value = ""
+                al_comentar()
+
+            campo_texto.on("keydown.enter", enviar)
+            ui.button(icon="arrow_upward", on_click=enviar).props("unelevated round color=primary").tooltip("Enviar")
+
+    def pagina_buzon(self, request: Request):
+        dispositivo = dispositivo_de(request)
+        persona_id = self.acceso.persona_de(dispositivo)
+        if persona_id is None:
+            return self._a_ingresar("/buzon")
+        preparar_pagina()
+        capa = ui.element("div")
+        estado: dict = {"firma": None}
+
+        def refrescar() -> None:
+            contenido.refresh()
+            actualizar_contador()
+
+        al_unirse = partial(self.abrir_dialogo_unirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+        al_salirse = partial(self.abrir_dialogo_salirse, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+        al_eliminar = partial(self.abrir_dialogo_eliminar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+        al_denunciar = partial(self.abrir_dialogo_denunciar, capa=capa, persona_id=persona_id, al_cambiar=refrescar)
+
+        def leer() -> tuple[list[datos.Aviso], list[datos.Aviso], tuple]:
+            momento = ahora()
+            me_uni, organizo = self.gestor.mi_buzon(persona_id, momento)
+            return me_uni, organizo, (firma(me_uni, momento), firma(organizo, momento))
+
+        def seccion(titulo: str, explicacion: str) -> None:
+            ui.label(titulo).classes("fu-display text-2xl font-bold mt-2")
+            ui.label(explicacion).classes("fu-gris text-sm -mt-4")
+
+        @ui.refreshable
+        def contenido() -> None:
+            momento = ahora()
+            me_uni, organizo, estado["firma"] = leer()
+
+            if not me_uni and not organizo:
+                with ui.column().classes("w-full items-center text-center py-16 gap-2"):
+                    ui.icon("inbox", size="56px").classes("fu-gris")
+                    ui.label("Tu buzón está vacío").classes("fu-display text-2xl font-bold")
+                    ui.label(
+                        "Cuando te unas a un evento o publiques uno, aparecerá aquí con todos sus detalles."
+                    ).classes("fu-gris max-w-sm")
+                    ui.button("Ver avisos abiertos", on_click=lambda: ui.navigate.to("/")).props(
+                        "unelevated no-caps"
+                    ).classes("fu-cta mt-2")
+                return
+
+            if me_uni:
+                seccion(
+                    "Me uní",
+                    "Dónde y cuándo es cada evento. Se quitan solos unas horas después de que empiezan.",
+                )
+                with ui.element("div").classes("fu-rejilla"):
+                    for aviso in me_uni:
+                        self.tarjeta_aviso(
+                            aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, al_denunciar, modo="buzon"
+                        )
+
+            if organizo:
+                seccion(
+                    "Mis avisos",
+                    "Los que publicaste. Siguen aquí aunque se llenen, hasta que termina su plazo.",
+                )
+                with ui.element("div").classes("fu-rejilla"):
+                    for aviso in organizo:
+                        self.tarjeta_aviso(
+                            aviso, momento, persona_id, al_unirse, al_salirse, al_eliminar, al_denunciar, modo="buzon"
+                        )
+
+        def revisar_cambios() -> None:
+            if not self._sigue_la_sesion(dispositivo, persona_id, "/buzon"):
+                return
+            if leer()[2] != estado["firma"]:
+                contenido.refresh()
+            actualizar_contador()
+
+        actualizar_contador, _ = self._portada(persona_id, dispositivo)
+        with ui.element("div").classes("fu-contenedor"):
+            volver_al_tablero()
+            ui.label("Mi buzón").classes("fu-display fu-titulo-pagina")
+            contenido()
+            ui.label(
+                "Tu buzón va con tu correo institucional: lo ves en cualquier navegador donde entres "
+                f"(hasta {self.acceso.MAX_DISPOSITIVOS} a la vez)."
+            ).classes("fu-gris text-xs text-center w-full mt-6")
+
+        ui.timer(self.SEGUNDOS_ENTRE_REVISIONES, revisar_cambios)
+
+    # ------------------------------------------------------------------ #
+    # Panel de administración (/admin): solo para quien administra la página
+    #
+    # Se activa creando en Render la variable de entorno CLAVE_ADMIN (ver
+    # README). Quien escribe la clave correcta queda como administrador en su
+    # cuenta hasta que cierre la sesión. La dirección /admin no aparece en
+    # ningún botón.
+    # ------------------------------------------------------------------ #
+
+    def pagina_admin(self, request: Request):
+        dispositivo = dispositivo_de(request)
+        persona_id = self.acceso.persona_de(dispositivo)
+        if persona_id is None:
+            return self._a_ingresar("/admin")
+        preparar_pagina()
+        cliente = getattr(request, "client", None)
+        ip = getattr(cliente, "host", None) or "desconocida"
+        capa = ui.element("div")
+
+        self._portada(persona_id, dispositivo)
+        with ui.element("div").classes("fu-contenedor fu-angosto"):
+            with ui.row().classes("items-center gap-2 no-wrap"):
+                ui.icon("admin_panel_settings", size="30px").classes("text-primary")
+                ui.label("Administración").classes("fu-display fu-titulo-pagina")
+
+            if not self.administracion.hay_clave:
+                with tarjeta_simple():
+                    ui.label("El panel está desactivado").classes("fu-display text-xl")
+                    ui.label(
+                        "Para activarlo, en Render entra a tu servicio → Environment → Add Environment "
+                        "Variable, crea CLAVE_ADMIN con una clave larga que solo tú conozcas y guarda. "
+                        "Render reinicia la página solo."
+                    ).classes("fu-gris")
+                return
+
+            if not self.administracion.es_admin(persona_id):
+                self._ingreso_admin(persona_id, ip)
+                return
+
+            self._panel(persona_id, capa)
+
+    def _ingreso_admin(self, persona_id: str | None, ip: str) -> None:
+        with tarjeta_simple():
+            ui.label("Esta sección es solo para quien administra la página.").classes("fu-gris")
+            clave = ui.input("Clave de administración", password=True, password_toggle_button=True).props(
+                "outlined autofocus"
+            ).classes("w-full")
+
+            def entrar() -> None:
+                try:
+                    self.administracion.entrar(persona_id, clave.value, ip)
+                except datos.ErrorValidacion as error:
+                    ui.notify(str(error), type="negative", position="top")
+                    return
+                ui.navigate.to("/admin")
+
+            clave.on("keydown.enter", entrar)
+            ui.button("Entrar", icon="login", on_click=entrar).props("unelevated rounded no-caps").classes(
+                "self-end"
+            )
+
+    def _panel(self, persona_id: str | None, capa: ui.element) -> None:
+        def sigo_siendo_admin() -> bool:
+            if self.administracion.es_admin(persona_id):
+                return True
+            ui.notify("Tu sesión de administración se cerró.", type="warning", position="top")
+            ui.navigate.to("/admin")
+            return False
+
+        guia(
+            "Desde aquí cuidas la página: revisas las denuncias, decides qué palabras se filtran "
+            "y puedes eliminar cualquier aviso."
+        )
+        with ui.tabs().props("no-caps align=left").classes("fu-pestanas w-full") as pestanas:
+            p_resumen = ui.tab("Resumen", icon="insights")
+            n_denuncias = len(self.administracion.denuncias_pendientes())
+            p_denuncias = ui.tab(f"Denuncias ({n_denuncias})" if n_denuncias else "Denuncias", icon="outlined_flag")
+            p_palabras = ui.tab("Palabras", icon="spellcheck")
+            p_bloqueados = ui.tab("Bloqueados", icon="block")
+            p_avisos = ui.tab("Avisos", icon="campaign")
+
+        with ui.tab_panels(pestanas, value=p_resumen).classes("w-full bg-transparent"):
+            # ------------------------------------------------------------ Resumen
+            with ui.tab_panel(p_resumen).classes("px-0 gap-4"):
+
+                @ui.refreshable
+                def cifras() -> None:
+                    c = self.administracion.estadisticas()
+                    tarjetas = [
+                        ("Avisos abiertos ahora", c["abiertos"], "campaign"),
+                        ("Publicados (7 días)", c["publicados_7d"], "add_circle_outline"),
+                        ("Personas unidas (7 días)", c["unidos_7d"], "group_add"),
+                        ("Bloqueos del filtro (7 días)", c["bloqueos_7d"], "block"),
+                        ("Avisos eliminados (7 días)", c["cancelados_7d"], "delete_outline"),
+                        ("Reglas propias del filtro", c["reglas"], "spellcheck"),
+                        ("Avisos con denuncias por revisar", c["denuncias_pendientes"], "outlined_flag"),
+                    ]
+                    with ui.row().classes("w-full gap-3"):
+                        for titulo, valor, icono in tarjetas:
+                            with ui.card().classes(
+                                "rounded-2xl shadow-none border border-stone-200 p-4 gap-1"
+                            ).style("flex: 1 1 150px; min-width: 150px"):
+                                ui.icon(icono, size="22px").classes("text-primary")
+                                ui.label(str(valor)).classes("fu-cifra")
+                                ui.label(titulo).classes("text-xs fu-gris")
+                    ui.label(f"Avisos publicados desde el comienzo: {c['avisos_total']}").classes(
+                        "text-sm fu-gris"
+                    )
+
+                cifras()
+
+                def cerrar_sesion() -> None:
+                    self.administracion.quitar_admin(persona_id)
+                    ui.navigate.to("/admin")
+
+                def cerrar_todas() -> None:
+                    n = self.administracion.quitar_todos_los_admin()
+                    ui.notify(f"Se cerraron {n} sesiones de administración.", type="info", position="top")
+                    ui.navigate.to("/admin")
+
+                with ui.row().classes("w-full justify-between"):
+                    ui.button("Actualizar", icon="refresh", on_click=cifras.refresh).props(
+                        "flat rounded no-caps color=grey-9"
+                    )
+                    ui.button("Cerrar sesión de administración", icon="logout", on_click=cerrar_sesion).props(
+                        "flat rounded no-caps color=red-8"
+                    )
+                ui.button(
+                    "Cerrar la sesión de administración en todos los navegadores",
+                    icon="phonelink_lock",
+                    on_click=cerrar_todas,
+                ).props("flat rounded no-caps dense color=red-8").classes("self-end")
+                ui.label(
+                    "Úsalo si entraste desde un computador ajeno o si cambiaste la clave."
+                ).classes("text-xs text-stone-400 self-end -mt-3")
+
+            # ------------------------------------------------------------ Denuncias
+            with ui.tab_panel(p_denuncias).classes("px-0 gap-4"):
+                ui.label(
+                    f"Con {self.administracion.UMBRAL_DENUNCIAS} denuncias de personas distintas, un aviso se oculta "
+                    "del tablero hasta que lo revises."
+                ).classes("text-sm fu-gris")
+
+                def tras_moderar() -> None:
+                    lista_denuncias.refresh()
+                    lista_avisos.refresh()
+                    cifras.refresh()
+
+                def descartar(aviso_id: int) -> None:
                     if not sigo_siendo_admin():
                         return
-                    en_contexto = modo.value == "contexto"
-                    if en_contexto and not [p for p in (campo_cerca.value or "").split(",") if p.strip()]:
-                        ui.notify(
-                            "Escribe al menos una palabra de contexto, o elige «Siempre».",
-                            type="negative",
-                            position="top",
-                        )
+                    self.administracion.descartar_denuncias(aviso_id)
+                    ui.notify("Denuncias descartadas. El aviso se ve normal otra vez.", type="info", position="top")
+                    tras_moderar()
+
+                @ui.refreshable
+                def lista_denuncias() -> None:
+                    momento = ahora()
+                    pendientes = self.administracion.denuncias_pendientes()
+                    if not pendientes:
+                        ui.label("No hay denuncias por revisar.").classes("fu-gris")
+                    for aviso, denuncias in pendientes:
+                        with tarjeta_simple():
+                            with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
+                                ui.label(aviso.titulo).classes(
+                                    "fu-display text-xl leading-snug cursor-pointer hover:underline"
+                                ).on("click", partial(ui.navigate.to, f"/aviso/{aviso.id}"))
+                                n = len(denuncias)
+                                etiqueta(f"{n} denuncia{'s' if n != 1 else ''}", "outlined_flag", rojo=True)
+                            if n >= self.administracion.UMBRAL_DENUNCIAS and not aviso.cancelado:
+                                ui.label("Oculto del tablero mientras lo revisas.").classes(
+                                    "text-sm font-semibold text-red-800"
+                                )
+                            ui.label(
+                                f"{aviso.lugar} · {texto_fecha_evento(aviso.inicio_evento, momento)}"
+                            ).classes("text-sm fu-gris")
+                            if aviso.descripcion:
+                                ui.label(aviso.descripcion).classes("text-sm fu-gris line-clamp-3")
+                            for motivo_txt, cantidad in Counter(d.nombre_motivo for d in denuncias).most_common():
+                                ui.label(f"• {motivo_txt} ({cantidad})").classes("text-sm ")
+                            for d in denuncias:
+                                if d.comentario:
+                                    ui.label(f"“{d.comentario}”").classes("text-sm italic fu-gris")
+                            with ui.row().classes("gap-2"):
+                                if not aviso.cancelado:
+                                    ui.button(
+                                        "Eliminar aviso",
+                                        icon="delete_outline",
+                                        on_click=partial(self.abrir_dialogo_eliminar, aviso.id, capa, persona_id, tras_moderar,
+                                            como_admin=True,
+                                        ),
+                                    ).props("unelevated rounded no-caps color=red-8")
+                                ui.button(
+                                    "Descartar denuncias", icon="done", on_click=partial(descartar, aviso.id)
+                                ).props("flat rounded no-caps color=grey-9")
+
+                lista_denuncias()
+
+            # ------------------------------------------------------------ Palabras
+            with ui.tab_panel(p_palabras).classes("px-0 gap-4"):
+                with tarjeta_simple():
+                    ui.label("Agregar palabra o frase al filtro").classes("fu-display text-xl")
+                    ui.label(
+                        "Se aplica al instante en toda la página, sin volver a publicar el código."
+                    ).classes("text-sm fu-gris -mt-2")
+                    campo_palabra = ui.input("Palabra o frase", placeholder="Ej: pico").props(
+                        f"outlined maxlength={self.administracion.LARGO_MAX_REGLA}"
+                    ).classes("w-full")
+                    modo = ui.toggle(
+                        {"contexto": "Solo en contexto inadecuado", "siempre": "Siempre"},
+                        value="contexto",
+                        on_change=lambda: campo_cerca.set_visibility(modo.value == "contexto"),
+                    ).props("spread no-caps unelevated rounded toggle-color=primary color=grey-3 text-color=grey-9").classes(
+                        "w-full"
+                    )
+                    campo_cerca = ui.input(
+                        "Se filtra si aparece cerca de… (separa con comas)",
+                        placeholder="Ej: chupa, chupen, mi, tu",
+                    ).props("outlined").classes("w-full")
+                    campo_excepto = ui.input(
+                        "Nunca se filtra en… (opcional, separa con comas)",
+                        placeholder="Ej: y pico, pico de",
+                    ).props("outlined").classes("w-full")
+                    ui.label(
+                        f"«Cerca» significa hasta {self.filtro.VENTANA} palabras antes o después. "
+                        "Las excepciones siempre ganan. Mayúsculas, tildes y trucos como p1c0 se detectan igual."
+                    ).classes("text-xs fu-gris")
+
+                    def agregar() -> None:
+                        if not sigo_siendo_admin():
+                            return
+                        en_contexto = modo.value == "contexto"
+                        if en_contexto and not [p for p in (campo_cerca.value or "").split(",") if p.strip()]:
+                            ui.notify(
+                                "Escribe al menos una palabra de contexto, o elige «Siempre».",
+                                type="negative",
+                                position="top",
+                            )
+                            return
+                        try:
+                            regla = self.administracion.agregar_regla(
+                                campo_palabra.value,
+                                cerca_de=campo_cerca.value if en_contexto else "",
+                                excepto=campo_excepto.value,
+                            )
+                        except datos.ErrorValidacion as error:
+                            ui.notify(str(error), type="negative", position="top")
+                            return
+                        ui.notify(f"«{regla.palabra}» agregada. Ya se está filtrando.", type="positive", position="top")
+                        campo_palabra.value = campo_cerca.value = campo_excepto.value = ""
+                        lista_reglas.refresh()
+                        probar()
+
+                    ui.button("Agregar al filtro", icon="add", on_click=agregar).props(
+                        "unelevated rounded no-caps"
+                    ).classes("self-end")
+
+                with tarjeta_simple():
+                    ui.label("Probar el filtro").classes("fu-display text-xl")
+                    prueba = ui.textarea(
+                        "Escribe un texto de ejemplo", on_change=lambda: probar()
+                    ).props("outlined autogrow").classes("w-full")
+                    resultado = ui.label("").classes("font-semibold")
+
+                    def probar() -> None:
+                        texto = prueba.value or ""
+                        if not texto.strip():
+                            resultado.text = ""
+                            return
+                        malas = self.filtro.encontradas(texto)
+                        if malas:
+                            resultado.text = "Se bloquearía por: " + ", ".join(f"«{m}»" for m in malas)
+                        else:
+                            resultado.text = "✅ Se podría publicar"
+
+                def borrar_regla(regla_id: int, palabra: str) -> None:
+                    if not sigo_siendo_admin():
                         return
-                    try:
-                        regla = datos.agregar_regla(
-                            campo_palabra.value,
-                            cerca_de=campo_cerca.value if en_contexto else "",
-                            excepto=campo_excepto.value,
-                        )
-                    except datos.ErrorValidacion as error:
-                        ui.notify(str(error), type="negative", position="top")
-                        return
-                    ui.notify(f"«{regla.palabra}» agregada. Ya se está filtrando.", type="positive", position="top")
-                    campo_palabra.value = campo_cerca.value = campo_excepto.value = ""
+                    self.administracion.borrar_regla(regla_id)
+                    ui.notify(f"Se quitó «{palabra}» del filtro.", type="info", position="top")
                     lista_reglas.refresh()
                     probar()
 
-                ui.button("Agregar al filtro", icon="add", on_click=agregar).props(
-                    "unelevated rounded no-caps"
-                ).classes("self-end")
+                @ui.refreshable
+                def lista_reglas() -> None:
+                    propias = self.administracion.reglas()
+                    ui.label(f"Tus reglas ({len(propias)})").classes("fu-display text-xl mt-2")
+                    if not propias:
+                        ui.label("Todavía no agregas palabras propias.").classes("fu-gris")
+                    for regla in propias:
+                        with tarjeta_simple():
+                            with ui.row().classes("w-full items-start justify-between no-wrap gap-2"):
+                                with ui.column().classes("gap-0.5"):
+                                    ui.label(regla.palabra).classes("fu-display text-xl")
+                                    if regla.siempre:
+                                        ui.label("Se filtra siempre").classes("text-sm fu-gris")
+                                    else:
+                                        ui.label("Se filtra cerca de: " + ", ".join(regla.cerca_de)).classes(
+                                            "text-sm fu-gris"
+                                        )
+                                    if regla.excepto:
+                                        ui.label("Nunca en: " + ", ".join(regla.excepto)).classes(
+                                            "text-sm fu-gris"
+                                        )
+                                ui.button(
+                                    icon="delete_outline", on_click=partial(borrar_regla, regla.id, regla.palabra)
+                                ).props("flat round color=red-8").tooltip("Quitar del filtro")
 
-            with tarjeta_simple():
-                ui.label("Probar el filtro").classes("fu-display text-xl")
-                prueba = ui.textarea(
-                    "Escribe un texto de ejemplo", on_change=lambda: probar()
-                ).props("outlined autogrow").classes("w-full")
-                resultado = ui.label("").classes("font-semibold")
+                lista_reglas()
 
-                def probar() -> None:
-                    texto = prueba.value or ""
-                    if not texto.strip():
-                        resultado.text = ""
-                        return
-                    malas = filtro.encontradas(texto)
-                    if malas:
-                        resultado.text = "Se bloquearía por: " + ", ".join(f"«{m}»" for m in malas)
-                    else:
-                        resultado.text = "✅ Se podría publicar"
-
-            def borrar_regla(regla_id: int, palabra: str) -> None:
-                if not sigo_siendo_admin():
-                    return
-                datos.borrar_regla(regla_id)
-                ui.notify(f"Se quitó «{palabra}» del filtro.", type="info", position="top")
-                lista_reglas.refresh()
-                probar()
-
-            @ui.refreshable
-            def lista_reglas() -> None:
-                propias = datos.reglas()
-                ui.label(f"Tus reglas ({len(propias)})").classes("fu-display text-xl mt-2")
-                if not propias:
-                    ui.label("Todavía no agregas palabras propias.").classes("fu-gris")
-                for regla in propias:
-                    with tarjeta_simple():
-                        with ui.row().classes("w-full items-start justify-between no-wrap gap-2"):
-                            with ui.column().classes("gap-0.5"):
-                                ui.label(regla.palabra).classes("fu-display text-xl")
-                                if regla.siempre:
-                                    ui.label("Se filtra siempre").classes("text-sm fu-gris")
-                                else:
-                                    ui.label("Se filtra cerca de: " + ", ".join(regla.cerca_de)).classes(
-                                        "text-sm fu-gris"
-                                    )
-                                if regla.excepto:
-                                    ui.label("Nunca en: " + ", ".join(regla.excepto)).classes(
-                                        "text-sm fu-gris"
-                                    )
-                            ui.button(
-                                icon="delete_outline", on_click=partial(borrar_regla, regla.id, regla.palabra)
-                            ).props("flat round color=red-8").tooltip("Quitar del filtro")
-
-            lista_reglas()
-
-            base = filtro.palabras_base()
-            with ui.expansion(f"Lista base ({len(base)} palabras, se filtran siempre)", icon="list").classes(
-                "w-full"
-            ):
-                ui.label(", ".join(base)).classes("text-xs fu-gris")
-                ui.label("La lista base está en filtro.py: para cambiarla hay que editar ese archivo.").classes(
-                    "text-xs text-stone-400 mt-2"
-                )
-
-        # ------------------------------------------------------------ Bloqueados
-        with ui.tab_panel(p_bloqueados).classes("px-0 gap-4"):
-
-            def borrar_registro() -> None:
-                if not sigo_siendo_admin():
-                    return
-                datos.borrar_filtrados()
-                ui.notify("Registro borrado.", type="info", position="top")
-                lista_bloqueados.refresh()
-                cifras.refresh()
-
-            with ui.row().classes("w-full justify-between items-center"):
-                ui.label(
-                    f"Lo que el filtro no dejó publicar (se guarda {datos.DIAS_REGISTRO_FILTRADOS} días)."
-                ).classes("text-sm fu-gris")
-                with ui.row().classes("gap-1"):
-                    ui.button(icon="refresh", on_click=lambda: lista_bloqueados.refresh()).props(
-                        "flat round color=grey-9"
-                    ).tooltip("Actualizar")
-                    ui.button("Borrar registro", icon="delete_sweep", on_click=borrar_registro).props(
-                        "flat rounded no-caps color=red-8"
+                base = self.filtro.palabras_base()
+                with ui.expansion(f"Lista base ({len(base)} palabras, se filtran siempre)", icon="list").classes(
+                    "w-full"
+                ):
+                    ui.label(", ".join(base)).classes("text-xs fu-gris")
+                    ui.label("La lista base está en filtro.py: para cambiarla hay que editar ese archivo.").classes(
+                        "text-xs text-stone-400 mt-2"
                     )
 
-            @ui.refreshable
-            def lista_bloqueados() -> None:
-                momento = ahora()
-                registro = datos.filtrados_recientes(100)
-                if not registro:
-                    ui.label("No hay bloqueos registrados.").classes("fu-gris")
-                for bloqueo in registro:
-                    with tarjeta_simple():
-                        with ui.row().classes("w-full items-center justify-between no-wrap"):
-                            etiqueta(bloqueo.campo, "block", rojo=True)
-                            ui.label(texto_fecha_evento(bloqueo.momento, momento)).classes(
-                                "text-xs fu-gris"
-                            )
-                        ui.label(bloqueo.texto).classes(" whitespace-pre-line break-words")
-                        ui.label("Detectó: " + ", ".join(f"«{p}»" for p in bloqueo.palabras)).classes(
-                            "text-xs font-semibold text-red-800"
+            # ------------------------------------------------------------ Bloqueados
+            with ui.tab_panel(p_bloqueados).classes("px-0 gap-4"):
+
+                def borrar_registro() -> None:
+                    if not sigo_siendo_admin():
+                        return
+                    self.administracion.borrar_filtrados()
+                    ui.notify("Registro borrado.", type="info", position="top")
+                    lista_bloqueados.refresh()
+                    cifras.refresh()
+
+                with ui.row().classes("w-full justify-between items-center"):
+                    ui.label(
+                        f"Lo que el filtro no dejó publicar (se guarda {self.administracion.DIAS_REGISTRO_FILTRADOS} días)."
+                    ).classes("text-sm fu-gris")
+                    with ui.row().classes("gap-1"):
+                        ui.button(icon="refresh", on_click=lambda: lista_bloqueados.refresh()).props(
+                            "flat round color=grey-9"
+                        ).tooltip("Actualizar")
+                        ui.button("Borrar registro", icon="delete_sweep", on_click=borrar_registro).props(
+                            "flat rounded no-caps color=red-8"
                         )
 
-            lista_bloqueados()
+                @ui.refreshable
+                def lista_bloqueados() -> None:
+                    momento = ahora()
+                    registro = self.administracion.filtrados_recientes(100)
+                    if not registro:
+                        ui.label("No hay bloqueos registrados.").classes("fu-gris")
+                    for bloqueo in registro:
+                        with tarjeta_simple():
+                            with ui.row().classes("w-full items-center justify-between no-wrap"):
+                                etiqueta(bloqueo.campo, "block", rojo=True)
+                                ui.label(texto_fecha_evento(bloqueo.momento, momento)).classes(
+                                    "text-xs fu-gris"
+                                )
+                            ui.label(bloqueo.texto).classes(" whitespace-pre-line break-words")
+                            ui.label("Detectó: " + ", ".join(f"«{p}»" for p in bloqueo.palabras)).classes(
+                                "text-xs font-semibold text-red-800"
+                            )
 
-        # ------------------------------------------------------------ Avisos
-        with ui.tab_panel(p_avisos).classes("px-0 gap-4"):
-            ui.label("Los últimos 60 avisos, abiertos o no. Puedes eliminar cualquiera.").classes(
-                "text-sm fu-gris"
-            )
+                lista_bloqueados()
 
-            def tras_eliminar() -> None:
-                lista_avisos.refresh()
-                lista_denuncias.refresh()
-                cifras.refresh()
+            # ------------------------------------------------------------ Avisos
+            with ui.tab_panel(p_avisos).classes("px-0 gap-4"):
+                ui.label("Los últimos 60 avisos, abiertos o no. Puedes eliminar cualquiera.").classes(
+                    "text-sm fu-gris"
+                )
 
-            @ui.refreshable
-            def lista_avisos() -> None:
-                momento = ahora()
-                avisos = datos.todos_los_avisos(60)
-                if not avisos:
-                    ui.label("Todavía no hay avisos.").classes("fu-gris")
-                for aviso in avisos:
-                    with tarjeta_simple():
-                        with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
-                            ui.label(aviso.titulo).classes(
-                                "fu-display text-xl leading-snug cursor-pointer hover:underline"
-                            ).on("click", partial(ui.navigate.to, f"/aviso/{aviso.id}"))
-                            if aviso.cancelado:
-                                quien = "por admin" if aviso.cancelado_por == "admin" else "por su dueño"
-                                etiqueta(f"Eliminado {quien}", "delete_outline", rojo=True)
-                            else:
-                                etiqueta(ESTADOS_ADMIN[aviso.motivo_cierre(momento)], "info")
-                        ui.label(
-                            f"{aviso.nombre_categoria} · {aviso.lugar} · "
-                            f"{texto_fecha_evento(aviso.inicio_evento, momento)} · "
-                            f"{aviso.ocupados} de {aviso.personas_necesarias}"
-                        ).classes("text-sm fu-gris")
-                        if not aviso.cancelado:
-                            ui.button(
-                                "Eliminar",
-                                icon="delete_outline",
-                                on_click=partial(
-                                    abrir_dialogo_eliminar,
-                                    aviso.id,
-                                    capa,
-                                    persona_id,
-                                    tras_eliminar,
-                                    como_admin=True,
-                                ),
-                            ).props("flat rounded no-caps dense color=red-8").classes("self-start -ml-1")
+                def tras_eliminar() -> None:
+                    lista_avisos.refresh()
+                    lista_denuncias.refresh()
+                    cifras.refresh()
 
-            lista_avisos()
+                @ui.refreshable
+                def lista_avisos() -> None:
+                    momento = ahora()
+                    avisos = self.administracion.todos_los_avisos(60)
+                    if not avisos:
+                        ui.label("Todavía no hay avisos.").classes("fu-gris")
+                    for aviso in avisos:
+                        with tarjeta_simple():
+                            with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
+                                ui.label(aviso.titulo).classes(
+                                    "fu-display text-xl leading-snug cursor-pointer hover:underline"
+                                ).on("click", partial(ui.navigate.to, f"/aviso/{aviso.id}"))
+                                if aviso.cancelado:
+                                    quien = "por admin" if aviso.cancelado_por == "admin" else "por su dueño"
+                                    etiqueta(f"Eliminado {quien}", "delete_outline", rojo=True)
+                                else:
+                                    etiqueta(self.administracion.ESTADOS_ADMIN[aviso.motivo_cierre(momento)], "info")
+                            ui.label(
+                                f"{aviso.nombre_categoria} · {aviso.lugar} · "
+                                f"{texto_fecha_evento(aviso.inicio_evento, momento)} · "
+                                f"{aviso.ocupados} de {aviso.personas_necesarias}"
+                            ).classes("text-sm fu-gris")
+                            if not aviso.cancelado:
+                                ui.button(
+                                    "Eliminar",
+                                    icon="delete_outline",
+                                    on_click=partial(self.abrir_dialogo_eliminar,
+                                        aviso.id,
+                                        capa,
+                                        persona_id,
+                                        tras_eliminar,
+                                        como_admin=True,
+                                    ),
+                                ).props("flat rounded no-caps dense color=red-8").classes("self-start -ml-1")
+
+                lista_avisos()
 
 
 # --------------------------------------------------------------------------- #
@@ -2738,6 +2956,20 @@ servidor.on_startup(iniciar_despertador)
 
 
 datos.inicializar()
+
+interfaz = Interfaz(
+    acceso.acceso,
+    datos.gestor,
+    lugares.buscador,
+    filtro.filtro_palabras,
+    datos.administracion,
+)
+interfaz.registrar_paginas()
+pagina_ingreso = interfaz.pagina_ingreso
+pagina_inicio = interfaz.pagina_inicio
+pagina_aviso = interfaz.pagina_aviso
+pagina_buzon = interfaz.pagina_buzon
+pagina_admin = interfaz.pagina_admin
 
 if __name__ in {"__main__", "__mp_main__"}:
     ui.run(

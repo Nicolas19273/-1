@@ -1,16 +1,18 @@
 # Join In
 
-Página web para publicar avisos del tipo «nos falta gente» (un partido, un juego
-de mesa, una salida) y que cualquier persona se una desde su celular o
-computador, con WiFi o con datos. Hecha **solo en Python** con
-[NiceGUI](https://nicegui.io).
+Página web para que los estudiantes de la **Universidad de Los Lagos** (Osorno)
+publiquen avisos del tipo «nos falta gente» (un partido, un juego de mesa, un
+grupo de estudio, una salida) y otros se sumen con un toque desde el celular o
+el computador. Se entra una vez con el correo institucional
+`@alumnos.ulagos.cl`. Hecha **solo en Python** con [NiceGUI](https://nicegui.io).
 
-Se publica **gratis** con dos servicios:
+Se publica **gratis** con tres servicios:
 
 | Servicio | Para qué | Costo |
 |----------|----------|-------|
 | **Render** (render.com) | Ejecuta la página y le da un enlace público `https://….onrender.com` | Gratis, sin tarjeta |
 | **Neon** (neon.com) | Guarda los avisos (base de datos PostgreSQL) | Gratis, sin tarjeta y sin vencimiento |
+| **Brevo** (brevo.com) | Envía el código de 6 dígitos para ingresar | Gratis hasta 300 correos al día |
 
 > ¿Por qué dos? Render gratis borra sus archivos cada vez que la página se
 > duerme, así que los avisos se guardan en Neon, que es permanente.
@@ -34,8 +36,9 @@ Se publica **gratis** con dos servicios:
 1. Crea una cuenta en **github.com**.
 2. Toca **New repository** → nombre `falta-uno` → **Create repository**.
 3. Toca **uploading an existing file** y arrastra **los archivos sueltos**
-   (no la carpeta): `app.py`, `datos.py`, `requirements.txt`, `render.yaml`
-   y `README.md`. Luego **Commit changes**.
+   (no la carpeta): `app.py`, `datos.py`, `acceso.py`, `filtro.py`,
+   `lugares.py`, `requirements.txt`, `render.yaml` y `README.md`. Luego
+   **Commit changes**.
 
    `render.yaml` tiene que quedar en la portada del repositorio, no dentro de
    otra carpeta.
@@ -98,7 +101,44 @@ despertador, sus visitas no gastan las horas gratis de Neon. Además, la página
 los avisos en memoria y solo vuelve a leer la base de datos cuando alguien
 publica o se une.
 
-### Paso 5 — Activar tu panel de administración
+### Paso 5 — Envío de los códigos por correo (Brevo)
+
+Para entrar, cada estudiante escribe su correo `@alumnos.ulagos.cl` y recibe
+un código de 6 dígitos. Render gratis no deja enviar correos por SMTP, así que
+la página usa la API de **Brevo** (por internet, como una página más).
+
+**Mientras no lo configures, la página funciona en modo de prueba:** el
+código aparece en pantalla, con el aviso «Modo de prueba», en vez de llegar
+al correo. Sirve para mostrarla, pero así cualquiera podría entrar con un
+correo ajeno: configúralo antes de abrirla a todos.
+
+1. Crea una cuenta gratis en **brevo.com**.
+2. **Remitente:** menú de tu cuenta → **Senders, Domains & Dedicated IPs** →
+   **Senders** → **Add a sender**. Nombre: `Join In`; correo: uno tuyo (por
+   ejemplo tu Gmail). Brevo te manda un código a ese correo para verificarlo.
+3. **Clave de la API:** menú de tu cuenta → **SMTP & API** → **API keys** →
+   **Generate a new API key** → nombre `join-in` → copia la clave (empieza
+   con `xkeysib-`; Brevo la muestra una sola vez). **No la publiques ni la
+   mandes por chat:** funciona como una contraseña.
+4. **IP de Render:** Brevo bloquea las llamadas desde direcciones IP que no
+   conoce. En Render, abre el servicio → **Connect** (arriba a la derecha) →
+   pestaña **Outbound** y copia las direcciones. En Brevo → menú de tu cuenta →
+   **Security** → **Authorized IPs** → **Authorize IP address** y agrégalas
+   (formato *IPv4 range* si vienen con `/`). Si prefieres no hacerlo, en esa
+   misma pantalla puedes usar **Deactivate** en la fila **API keys**.
+5. En Render → servicio `falta-uno` → **Environment** → **Add Environment
+   Variable**, crea dos:
+   - `BREVO_API_KEY` = la clave del punto 3
+   - `CORREO_REMITENTE` = el correo que verificaste en el punto 2
+6. **Save Changes**. Render reinicia la página y desde ahí los códigos llegan
+   por correo (el aviso «Modo de prueba» desaparece).
+
+Si en **Logs** aparece `[acceso] Brevo respondió 401`, revisa la clave o el
+punto 4; si dice `400`, el remitente no está verificado. Con un remitente
+Gmail, Brevo puede cambiar la dirección que se ve y algunos códigos pueden
+llegar a **spam** (la página lo advierte); con un dominio propio llegan mejor.
+
+### Paso 6 — Activar tu panel de administración
 
 El panel está en `https://TU-ENLACE.onrender.com/admin`. No aparece en
 ningún botón de la página y pide una clave que solo tú conoces.
@@ -108,8 +148,9 @@ ningún botón de la página y pide una clave que solo tú conoces.
 2. Key: `CLAVE_ADMIN` · Value: una clave larga que no uses en otro lado
    (por ejemplo, 4 o 5 palabras al azar: `tetera-volcan-azul-mesa-73`).
 3. Toca **Save Changes**. Render reinicia la página solo (1 a 3 minutos).
-4. Abre `/admin`, escribe la clave y toca **Entrar**. Ese navegador queda
-   como administrador hasta que toques **Cerrar sesión de administración**.
+4. Entra a la página con tu correo institucional, abre `/admin`, escribe la
+   clave y toca **Entrar**. Tu cuenta queda como administradora hasta que
+   toques **Cerrar sesión de administración**.
 
 La clave nunca se guarda en el código ni en GitHub. Si alguien se equivoca
 de clave 5 veces, esa conexión queda bloqueada 15 minutos. Si cambias la
@@ -118,7 +159,7 @@ clave, usa **Cerrar la sesión de administración en todos los navegadores**.
 Qué hay en el panel:
 
 - **Resumen:** avisos abiertos, publicados, personas unidas, bloqueos,
-  avisos eliminados y denuncias por revisar.
+  avisos eliminados, denuncias por revisar y estudiantes registrados.
 - **Denuncias:** los avisos que la gente denunció, con los motivos y
   comentarios. Puedes **eliminar el aviso** o **descartar las denuncias**.
   Con 3 denuncias de personas distintas, el aviso se oculta del tablero
@@ -136,7 +177,7 @@ Qué hay en el panel:
   eliminar cualquiera. Quienes se habían unido lo ven en su buzón como
   "Cancelado por la administración".
 
-### Paso 6 — Mapa con estilo moderno (recomendado)
+### Paso 7 — Mapa con estilo moderno (recomendado)
 
 Los mapas usan el estilo **Voyager de CARTO** (colores suaves, calles claras
 y nítido en celulares) si existe la variable `CARTO_KEY`. Sin ella se usa el
@@ -161,9 +202,20 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
 
 ## Cómo funciona
 
+0. **Ingresar (una sola vez por navegador):** se escribe el correo
+   `@alumnos.ulagos.cl`, llega un código de 6 dígitos (vale 10 minutos, 5
+   intentos) y, solo la primera vez, se escribe el nombre que verán los
+   demás. El correo **nunca se muestra**. No hay contraseña. El navegador
+   queda recordado por un año; arriba a la derecha, el botón con tus
+   iniciales tiene **Cerrar sesión**.
+   - **Un correo, máximo 2 navegadores a la vez** (por ejemplo, celular y
+     computador). Al entrar desde un tercero se cierra la sesión usada hace
+     más tiempo. Así un mismo correo no lo puede usar un curso entero.
+   - Si alguien comparte el enlace de un aviso, quien lo abre ingresa y
+     vuelve directo a ese aviso.
 1. Toca el botón **+** y completa el aviso: título, categoría, lugar, fecha,
    hora, cuántos son, cuántos necesitan, detalles y si dura **24 o 48 horas**.
-   Quien publica **no necesita escribir su nombre**.
+   El aviso muestra «Organiza» con tu nombre registrado.
    - **Lugar:** se escribe el nombre (ej. «Cancha del liceo»). Opcional:
      **Marcar en el mapa** abre un selector a pantalla completa, como en las
      apps de delivery: el pin queda fijo al centro y se mueve el mapa debajo
@@ -178,9 +230,9 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
      («$2.000 por persona») y tiene un tope de **$80.000**.
 2. El aviso aparece para todos en el tablero. Las páginas abiertas se
    actualizan solas.
-3. Otra persona toca **Unirme**, escribe su nombre y queda anotada. Al
-   confirmar ve el resumen completo (lugar, hora, detalles) y el evento se
-   guarda en su **buzón**. La próxima vez su nombre ya aparece escrito.
+3. Otra persona toca **Unirme** y queda anotada con su nombre registrado:
+   **un solo toque**. Ve el resumen completo (lugar, hora, detalles) y el
+   evento se guarda en su **buzón**. Si tocó por error, **Deshacer**.
 4. En el **tablero**, el aviso desaparece cuando se completan los cupos,
    cuando termina su plazo de 24/48 h o cuando llega la hora del evento.
 5. El botón **Buzón** (arriba a la derecha, con un contador) abre `/buzon`:
@@ -208,7 +260,8 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
    - **🚩 Denunciar:** quien vea un aviso inapropiado lo puede denunciar una
      vez, eligiendo un motivo. Le llega a la administración.
 9. **Filtro de palabras inapropiadas** (`filtro.py`): si el título, el lugar,
-   los detalles o el nombre tienen groserías, insultos u ofensas, el campo se
+   los detalles, un comentario o el nombre (al registrarse) tienen groserías,
+   insultos u ofensas, el campo se
    marca en rojo mientras se escribe y al publicar se dice exactamente qué
    palabra cambiar; no se publica hasta corregirla. Detecta trucos como
    `w3on`, `p.u.t.a`, `weooon` o `ctm`, y cuida no tachar palabras normales
@@ -217,14 +270,16 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
    agregar palabras al instante (y con contexto) desde el panel `/admin`, o
    cambiar la lista base al comienzo de `filtro.py`.
 
-**¿Cómo sabe la página quién es quién, sin cuentas?** A cada navegador le da
-un identificador al azar guardado en una cookie que dura un año. Por eso el
-buzón es de *ese* navegador: si alguien entra desde otro teléfono, en modo
-incógnito o borra las cookies, empieza con un buzón vacío.
+**¿Cómo sabe la página quién es quién?** A cada navegador le da un
+identificador al azar en una cookie. Al ingresar con el código, ese navegador
+queda unido a la cuenta del estudiante. Por eso el buzón va con el correo: se
+ve igual en el celular y en el computador. Lo que un navegador había hecho
+antes de que existiera el ingreso (avisos, uniones, comentarios) pasa a la
+cuenta la primera vez que entra.
 
 Si dos personas tocan «Unirme» al mismo tiempo por el último cupo, solo una lo
 consigue (la base de datos bloquea el aviso mientras anota a cada persona).
-Tampoco se puede unir dos veces el mismo navegador, ni quien publicó el aviso.
+Tampoco se puede unir dos veces la misma persona, ni quien publicó el aviso.
 
 ---
 
@@ -238,16 +293,21 @@ python app.py
 ```
 
 Se abre `http://localhost:8080`. Sin `DATABASE_URL`, los datos se guardan
-en un archivo local `avisos.db`, aparte de los de internet.
+en un archivo local `avisos.db`, aparte de los de internet. Sin
+`BREVO_API_KEY`, el código para ingresar aparece en pantalla (modo de prueba).
 
 ## Archivos
 
-| Archivo            | Qué tiene |
-|--------------------|-----------|
-| `app.py`           | La interfaz: páginas, tarjetas, formularios. Aquí se cambia el diseño. |
-| `datos.py`         | Las reglas (cupos, plazos, validaciones) y la base de datos. |
-| `filtro.py`        | El filtro de palabras inapropiadas y sus listas. |
-| `lugares.py`       | El buscador de lugares de Osorno (OpenStreetMap: Photon y Nominatim). |
+Cada archivo tiene una de las clases del diagrama del informe, con una sola
+instancia que usa la página:
+
+| Archivo            | Clase | Qué tiene |
+|--------------------|-------|-----------|
+| `app.py`           | `Interfaz` | Las páginas, tarjetas y formularios. Aquí se cambia el diseño. |
+| `acceso.py`        | `Acceso` | Ingreso con correo institucional: código, nombre y sesiones (máx. 2). |
+| `datos.py`         | `GestorAvisos`, `Administracion` | Las reglas (cupos, plazos, validaciones), el panel /admin y la base de datos. |
+| `filtro.py`        | `FiltroPalabras` | El filtro de palabras inapropiadas y sus listas. |
+| `lugares.py`       | `BuscadorLugares` | El buscador de lugares de Osorno (OpenStreetMap: Photon y Nominatim). |
 | `requirements.txt` | Las librerías que instala Render. |
 | `render.yaml`      | Las instrucciones para que Render publique la página gratis. |
 

@@ -13,3 +13,7 @@ services:
         value: "3.12.11"
       - key: DATABASE_URL
         sync: false # Render te la pide al crear la página (no queda en GitHub)
+      - key: BREVO_API_KEY
+        sync: false # clave de Brevo para enviar los códigos (README, paso 5)
+      - key: CORREO_REMITENTE
+        sync: false # correo verificado en Brevo

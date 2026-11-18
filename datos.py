@@ -6,19 +6,25 @@ Dónde se guardan los datos:
   * En internet: si existe la variable de entorno DATABASE_URL, se usa esa
     base de datos PostgreSQL (por ejemplo, una gratuita de Neon).
 
-La interfaz (app.py) solo llama a las funciones de este archivo: si más
-adelante rehacemos el diseño, esta parte no se toca.
+Clases (las mismas del diagrama del informe):
+  * GestorAvisos   — publicar, unirse, salirse, eliminar, comentar, denunciar.
+  * Administracion — clave del panel /admin, denuncias, filtro y moderación.
+  (Acceso, el ingreso con correo institucional, está en acceso.py.)
 
-Quién es quién (sin cuentas ni contraseñas):
-  Cada navegador recibe un identificador al azar guardado en una cookie
-  (lo pone app.py). Con él sabemos qué avisos publicó esa persona y a cuáles
-  se unió, para mostrárselos en su buzón.
+La interfaz (app.py) solo usa una instancia de cada clase: si más adelante
+rehacemos el diseño, esta parte no se toca.
+
+Quién es quién:
+  Cada estudiante ingresa una vez con su correo @alumnos.ulagos.cl (acceso.py).
+  Su identificador (persona_id) dice qué avisos publicó y a cuáles se unió, y
+  su nombre registrado es el que aparece al unirse o comentar. El correo
+  nunca se muestra.
 
 Reglas:
-  * Quien publica indica cuántos son ahora y cuántos necesitan en total.
-    No necesita escribir su nombre.
+  * Quien publica indica cuántos son ahora y cuántos necesitan en total
+    (máximo 40).
   * El aviso dura 24 o 48 horas (lo elige quien publica).
-  * En el tablero público, el aviso desaparece cuando:
+  * En el tablero, el aviso desaparece cuando:
       - se completan los cupos, o
       - se cumple el plazo de 24/48 h, o
       - llega la hora del evento (no tiene sentido unirse a algo que ya empezó).
@@ -28,9 +34,11 @@ Reglas:
     después de que empieza el evento, para recordar dónde y cuándo es.
   * Quien publicó un aviso puede eliminarlo. Sale del tablero y de su buzón;
     a quienes se habían unido les queda en el buzón marcado como cancelado.
-  * Cualquiera puede comentar un aviso (comentarios cortos, con el mismo filtro).
-  * Cualquiera puede denunciar un aviso ajeno una vez. Con 3 denuncias sin
-    revisar, el aviso se oculta del tablero hasta que la administración lo vea.
+  * Unirse es un toque: se usa el nombre registrado.
+  * Se puede comentar un aviso (comentarios cortos, con el mismo filtro).
+  * Cada estudiante puede denunciar un aviso ajeno una vez. Con 3 denuncias
+    sin revisar, el aviso se oculta del tablero hasta que la administración
+    lo vea.
   * Quien se unió puede salirse antes de que empiece el evento. Su cupo queda
     libre y, si el aviso sigue dentro de plazo, vuelve a aparecer en el
     tablero (eso pasa solo: el tablero siempre muestra los avisos con cupo).
@@ -38,10 +46,12 @@ Reglas:
 
 from __future__ import annotations
 
+import hmac
 import os
 import re
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -102,7 +112,7 @@ class ErrorValidacion(Exception):
 @dataclass(frozen=True)
 class Participante:
     nombre: str
-    persona_id: str | None  # identificador del navegador (None en avisos antiguos)
+    persona_id: str | None  # identificador del estudiante (None en avisos antiguos)
 
 
 @dataclass(frozen=True)
@@ -116,7 +126,7 @@ class Aviso:
     personas_actuales: int  # cuántos eran al publicar (incluye a quien publica)
     personas_necesarias: int  # total que necesitan para el evento
     creador: str  # nombre de quien publicó (vacío en avisos nuevos)
-    creador_id: str | None  # navegador de quien publicó
+    creador_id: str | None  # identificador de quien publicó
     duracion_horas: int
     creado_en: datetime
     expira_en: datetime
@@ -256,7 +266,20 @@ CREATE TABLE IF NOT EXISTS denuncias (
     momento    INTEGER NOT NULL,
     revisada   INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_denuncias_aviso ON denuncias(aviso_id)
+CREATE INDEX IF NOT EXISTS idx_denuncias_aviso ON denuncias(aviso_id);
+CREATE TABLE IF NOT EXISTS estudiantes (
+    persona_id TEXT    PRIMARY KEY,
+    correo     TEXT    NOT NULL UNIQUE,
+    nombre     TEXT    NOT NULL,
+    creado_en  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sesiones (                 -- horarios en milisegundos
+    dispositivo TEXT    PRIMARY KEY,
+    persona_id  TEXT    NOT NULL REFERENCES estudiantes(persona_id) ON DELETE CASCADE,
+    creada_en   INTEGER NOT NULL,
+    usada_en    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sesiones_persona ON sesiones(persona_id)
 """
 
 _ESQUEMA_POSTGRES = """
@@ -320,7 +343,20 @@ CREATE TABLE IF NOT EXISTS denuncias (
     momento    BIGINT  NOT NULL,
     revisada   INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_denuncias_aviso ON denuncias(aviso_id)
+CREATE INDEX IF NOT EXISTS idx_denuncias_aviso ON denuncias(aviso_id);
+CREATE TABLE IF NOT EXISTS estudiantes (
+    persona_id TEXT    PRIMARY KEY,
+    correo     TEXT    NOT NULL UNIQUE,
+    nombre     TEXT    NOT NULL,
+    creado_en  BIGINT  NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sesiones (                 -- horarios en milisegundos
+    dispositivo TEXT    PRIMARY KEY,
+    persona_id  TEXT    NOT NULL REFERENCES estudiantes(persona_id) ON DELETE CASCADE,
+    creada_en   BIGINT  NOT NULL,
+    usada_en    BIGINT  NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sesiones_persona ON sesiones(persona_id)
 """
 # (los horarios se guardan como segundos Unix: un número entero)
 
@@ -434,38 +470,6 @@ def _conexion() -> Iterator[_Conexion]:
         con.cerrar()
 
 
-def inicializar() -> None:
-    """Crea o actualiza las tablas y carga las reglas del filtro. Se puede llamar las veces que sea."""
-    with _conexion() as con:
-        con.crear_tablas()
-    _cargar_reglas()
-
-
-# --------------------------------------------------------------------------- #
-# Caché en memoria
-#
-# Cada página abierta revisa cada pocos segundos si hay cambios. Para no
-# consultar la base de datos todo el rato (la de Neon gratis tiene horas de
-# cómputo limitadas), guardamos las listas en memoria y solo las volvemos a
-# leer cuando alguien publica o se une. Funciona porque la app corre en un
-# solo proceso, que es como corre NiceGUI.
-# --------------------------------------------------------------------------- #
-
-_candado = threading.Lock()
-_version = 0
-_cache_activos: tuple[datetime, list[Aviso]] | None = None
-_cache_detalle: dict[int, Aviso] = {}
-_cache_buzon: dict[str, tuple[datetime, list[Aviso], list[Aviso]]] = {}
-
-
-def _invalidar_cache() -> None:
-    global _version, _cache_activos
-    with _candado:
-        _version += 1
-        _cache_activos = None
-        _cache_detalle.clear()
-        _cache_buzon.clear()
-
 
 # --------------------------------------------------------------------------- #
 # Utilidades
@@ -487,11 +491,6 @@ def _de_ts(segundos: int) -> datetime:
 def limpiar(texto: str | None) -> str:
     """Quita espacios sobrantes: '  Juan   Pérez ' -> 'Juan Pérez'."""
     return " ".join((texto or "").split())
-
-
-def _clave_nombre(nombre: str) -> str:
-    """Para comparar nombres sin importar mayúsculas: 'JUAN' == 'juan'."""
-    return limpiar(nombre).casefold()
 
 
 def _validar_largo(valor: str, campo: str, minimo: int, maximo: int) -> None:
@@ -524,20 +523,6 @@ def armar_fecha_hora(fecha: str | None, hora: str | None) -> datetime:
     except ValueError:
         raise ErrorValidacion("La fecha u hora no es válida.") from None
     return momento.replace(tzinfo=ZONA_HORARIA)
-
-
-def _sin_groserias(
-    texto: str, campo: str, persona_id: str | None, plural: bool = False, registro: str = ""
-) -> None:
-    """Si hay palabras inapropiadas, las anota en el registro y avisa cuáles cambiar."""
-    malas = filtro.encontradas(texto)
-    if malas:
-        registrar_filtrado(registro or campo, texto, malas, persona_id)
-        lista = ", ".join(f"«{m}»" for m in malas)
-        verbo = "tienen" if plural else "tiene"
-        raise ErrorValidacion(
-            f"{campo} {verbo} palabras inapropiadas ({lista}). Cámbialas para poder publicar."
-        )
 
 
 _SOLO_DIGITOS = re.compile(r"^[0-9]+$")
@@ -666,532 +651,9 @@ def _contar_comentarios(con: _Conexion, ids: list[int]) -> dict[int, int]:
     return {int(f["aviso_id"]): int(f["n"]) for f in filas}
 
 
-# --------------------------------------------------------------------------- #
-# Operaciones
-# --------------------------------------------------------------------------- #
-
-
-def crear_aviso(
-    *,
-    titulo: str,
-    categoria: str,
-    lugar: str,
-    inicio_evento: datetime,
-    personas_actuales,
-    personas_necesarias,
-    duracion_horas,
-    descripcion: str = "",
-    creador_id: str | None = None,
-    creador: str = "",
-    lat: float | None = None,
-    lng: float | None = None,
-    valor: int | str | None = None,
-    ahora: datetime | None = None,
-) -> Aviso:
-    """Valida los datos y publica el aviso. Lanza ErrorValidacion si algo falla."""
-    ahora = _ahora(ahora)
-
-    titulo = limpiar(titulo)
-    lugar = limpiar(lugar)
-    creador = limpiar(creador)[: LARGO_NOMBRE[1]]
-    descripcion = (descripcion or "").strip()
-
-    # Se valida en el mismo orden en que aparecen los campos del formulario.
-    _validar_largo(titulo, "Título", *LARGO_TITULO)
-    _sin_groserias(titulo, "El título", creador_id, registro="Título")
-    if categoria not in CATEGORIAS:
-        raise ErrorValidacion("Elige una categoría.")
-    _validar_largo(lugar, "Lugar", *LARGO_LUGAR)
-    _sin_groserias(lugar, "El lugar", creador_id, registro="Lugar")
-    lat, lng = _validar_ubicacion(lat, lng)
-    creador = filtro.quitar(creador)
-
-    if inicio_evento.tzinfo is None:
-        inicio_evento = inicio_evento.replace(tzinfo=ZONA_HORARIA)
-    if inicio_evento <= ahora:
-        raise ErrorValidacion("La fecha y hora del evento ya pasaron.")
-    if inicio_evento > ahora + timedelta(days=365):
-        raise ErrorValidacion("El evento debe ser dentro del próximo año.")
-
-    actuales = _a_entero(personas_actuales, "¿Cuántos son ahora?")
-    necesarias = _a_entero(personas_necesarias, "¿Cuántos necesitan en total?")
-    if actuales < 1:
-        raise ErrorValidacion("Ustedes son al menos 1 (tú).")
-    if necesarias > MAX_PERSONAS:
-        raise ErrorValidacion(f"El máximo es {MAX_PERSONAS} personas por aviso.")
-    if necesarias <= actuales:
-        raise ErrorValidacion(
-            "El total que necesitan debe ser mayor a los que ya son "
-            "(si no, ¡no falta nadie!)."
-        )
-
-    valor = None if valor is None else parsear_valor(valor)
-
-    if len(descripcion) > LARGO_MAX_DESCRIPCION:
-        raise ErrorValidacion(f"Detalles: máximo {LARGO_MAX_DESCRIPCION} caracteres.")
-    _sin_groserias(descripcion, "Los detalles", creador_id, plural=True, registro="Detalles")
-
-    duracion = _a_entero(duracion_horas, "Duración del aviso")
-    if duracion not in DURACIONES_PERMITIDAS:
-        raise ErrorValidacion("El aviso puede durar 24 o 48 horas.")
-
-    expira_en = ahora + timedelta(hours=duracion)
-
-    with _conexion() as con:
-        nuevo_id = con.insertar(
-            """
-            INSERT INTO avisos (titulo, categoria, descripcion, lugar, inicio_evento,
-                                personas_actuales, personas_necesarias, creador,
-                                creador_id, duracion_horas, creado_en, expira_en, lat, lng,
-                                valor)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                titulo,
-                categoria,
-                descripcion,
-                lugar,
-                _a_ts(inicio_evento),
-                actuales,
-                necesarias,
-                creador,
-                creador_id or None,
-                duracion,
-                _a_ts(ahora),
-                _a_ts(expira_en),
-                lat,
-                lng,
-                valor,
-            ),
-        )
-    _invalidar_cache()
-
-    aviso = obtener_aviso(nuevo_id)
-    assert aviso is not None
-    return aviso
-
-
-def obtener_aviso(aviso_id: int) -> Aviso | None:
-    """Devuelve el aviso (abierto o cerrado) o None si no existe."""
-    with _candado:
-        if aviso_id in _cache_detalle:
-            return _cache_detalle[aviso_id]
-        version = _version
-
-    with _conexion() as con:
-        encontrados = _leer_avisos(con, "SELECT * FROM avisos WHERE id = ?", (aviso_id,))
-    if not encontrados:
-        return None
-    aviso = encontrados[0]
-
-    with _candado:
-        if version == _version:  # nadie escribió mientras leíamos
-            _cache_detalle[aviso_id] = aviso
-    return aviso
-
-
-def avisos_activos(ahora: datetime | None = None) -> list[Aviso]:
-    """Tablero público: avisos con cupo y dentro de plazo, del más próximo al más lejano."""
-    global _cache_activos
-    ahora = _ahora(ahora)
-
-    with _candado:
-        guardado, version = _cache_activos, _version
-
-    if guardado is None or ahora < guardado[0]:
-        ts = _a_ts(ahora)
-        with _conexion() as con:
-            lista = _leer_avisos(
-                con,
-                """
-                SELECT a.*
-                FROM avisos a
-                LEFT JOIN participantes p ON p.aviso_id = a.id
-                WHERE a.expira_en > ? AND a.inicio_evento > ? AND a.cancelado_en IS NULL
-                  AND (SELECT COUNT(*) FROM denuncias d
-                       WHERE d.aviso_id = a.id AND d.revisada = 0) < ?
-                GROUP BY a.id
-                HAVING a.personas_actuales + COUNT(p.id) < a.personas_necesarias
-                ORDER BY a.inicio_evento ASC, a.id ASC
-                """,
-                (ts, ts, UMBRAL_DENUNCIAS),
-            )
-        with _candado:
-            if version == _version:
-                _cache_activos = (ahora, lista)
-    else:
-        lista = guardado[1]
-
-    # Lo que se cerró por tiempo desde la última lectura se filtra aquí.
-    return [a for a in lista if a.esta_abierto(ahora)]
-
-
-def mi_buzon(persona_id: str | None, ahora: datetime | None = None) -> tuple[list[Aviso], list[Aviso]]:
-    """
-    Devuelve (me_uni, organizo) para el buzón de una persona.
-
-    * me_uni: avisos a los que se unió, hasta unas horas después del evento.
-    * organizo: avisos que publicó, hasta que se cumple su plazo de 24/48 h
-      (aunque ya se hayan llenado).
-    """
-    if not persona_id:
-        return [], []
-    ahora = _ahora(ahora)
-
-    with _candado:
-        guardado, version = _cache_buzon.get(persona_id), _version
-
-    if guardado is None or ahora < guardado[0]:
-        ts = _a_ts(ahora)
-        with _conexion() as con:
-            me_uni = _leer_avisos(
-                con,
-                """
-                SELECT a.* FROM avisos a
-                JOIN participantes p ON p.aviso_id = a.id
-                WHERE p.persona_id = ? AND a.inicio_evento > ?
-                ORDER BY a.inicio_evento ASC, a.id ASC
-                """,
-                (persona_id, ts - HORAS_EN_BUZON_TRAS_INICIO * 3600),
-            )
-            organizo = _leer_avisos(
-                con,
-                """
-                SELECT * FROM avisos
-                WHERE creador_id = ? AND expira_en > ? AND cancelado_en IS NULL
-                ORDER BY inicio_evento ASC, id ASC
-                """,
-                (persona_id, ts),
-            )
-        with _candado:
-            if version == _version:
-                _cache_buzon[persona_id] = (ahora, me_uni, organizo)
-    else:
-        _, me_uni, organizo = guardado
-
-    return (
-        [a for a in me_uni if ahora < a.visible_en_buzon_hasta],
-        [a for a in organizo if ahora < a.expira_en],
-    )
-
-
-def nombre_usado(persona_id: str | None) -> str:
-    """El último nombre con que esta persona se unió a algo (para no reescribirlo)."""
-    if not persona_id:
-        return ""
-    with _conexion() as con:
-        fila = con.ejecutar(
-            "SELECT nombre FROM participantes WHERE persona_id = ? ORDER BY id DESC LIMIT 1",
-            (persona_id,),
-        ).fetchone()
-    return fila["nombre"] if fila else ""
-
-
-def unirse(
-    aviso_id: int,
-    nombre: str,
-    persona_id: str | None = None,
-    ahora: datetime | None = None,
-) -> Aviso:
-    """
-    Suma a una persona al aviso y devuelve el aviso actualizado.
-
-    Todo ocurre dentro de una transacción que bloquea el aviso: si dos
-    personas presionan "Unirme" al mismo tiempo por el último cupo, solo una
-    lo consigue.
-    """
-    ahora = _ahora(ahora)
-    nombre = limpiar(nombre)
-    _validar_largo(nombre, "Tu nombre", *LARGO_NOMBRE)
-    if filtro.contiene(nombre):
-        registrar_filtrado("Nombre", nombre, filtro.encontradas(nombre), persona_id)
-        raise ErrorValidacion(
-            "Ese nombre tiene palabras inapropiadas. Usa tu nombre real o un apodo amable."
-        )
-
-    with _conexion() as con, con.transaccion():
-        fila = con.bloquear_aviso(aviso_id)
-        if fila is None:
-            raise ErrorValidacion("Este aviso no existe.")
-
-        aviso = _fila_a_aviso(fila, _inscritos_de(con, [aviso_id])[aviso_id])
-        if aviso.es_de(persona_id):
-            raise ErrorValidacion("Este aviso es tuyo: ya cuentas dentro del grupo.")
-        if aviso.tiene_inscrito(persona_id):
-            raise ErrorValidacion("Ya estás anotado en este aviso. Míralo en tu buzón.")
-
-        motivo = aviso.motivo_cierre(ahora)
-        if motivo == CANCELADO:
-            raise ErrorValidacion("Este aviso fue cancelado por quien lo publicó.")
-        if motivo == COMPLETO:
-            raise ErrorValidacion("Llegaste tarde: el grupo ya se completó.")
-        if motivo == INICIADO:
-            raise ErrorValidacion("El evento ya comenzó; el aviso está cerrado.")
-        if motivo == VENCIDO:
-            raise ErrorValidacion("Este aviso ya cerró: se acabó su plazo.")
-
-        ya_estan = {_clave_nombre(n) for n in (aviso.creador, *aviso.participantes) if n}
-        if _clave_nombre(nombre) in ya_estan:
-            raise ErrorValidacion(
-                f"Ya hay un «{nombre}» en este aviso. "
-                "Agrega tu apellido o una inicial para diferenciarte."
-            )
-
-        con.ejecutar(
-            "INSERT INTO participantes (aviso_id, nombre, persona_id, unido_en) VALUES (?, ?, ?, ?)",
-            (aviso_id, nombre, persona_id or None, _a_ts(ahora)),
-        )
-    _invalidar_cache()
-
-    actualizado = obtener_aviso(aviso_id)
-    assert actualizado is not None
-    return actualizado
-
-
-def salirse(aviso_id: int, persona_id: str | None, ahora: datetime | None = None) -> Aviso:
-    """
-    Saca a una persona de un aviso al que se había unido y devuelve el aviso
-    actualizado. Se puede hasta que empieza el evento. Si el aviso queda con
-    cupo y dentro de plazo, vuelve a aparecer en el tablero.
-    """
-    ahora = _ahora(ahora)
-    if not persona_id:
-        raise ErrorValidacion("No pudimos reconocer tu navegador. Recarga la página.")
-
-    with _conexion() as con, con.transaccion():
-        fila = con.bloquear_aviso(aviso_id)
-        if fila is None:
-            raise ErrorValidacion("Este aviso no existe.")
-        aviso = _fila_a_aviso(fila, _inscritos_de(con, [aviso_id])[aviso_id])
-        if not aviso.tiene_inscrito(persona_id):
-            raise ErrorValidacion("No estás anotado en este aviso.")
-        if ahora >= aviso.inicio_evento and not aviso.cancelado:
-            raise ErrorValidacion("El evento ya empezó: ya no puedes salirte desde aquí.")
-        con.ejecutar(
-            "DELETE FROM participantes WHERE aviso_id = ? AND persona_id = ?",
-            (aviso_id, persona_id),
-        )
-    _invalidar_cache()
-
-    actualizado = obtener_aviso(aviso_id)
-    assert actualizado is not None
-    return actualizado
-
-
-def eliminar_aviso(
-    aviso_id: int, persona_id: str | None, ahora: datetime | None = None, como_admin: bool = False
-) -> Aviso:
-    """
-    Quien publicó el aviso lo elimina. Desaparece del tablero y de su buzón.
-    Quienes ya se habían unido lo siguen viendo en su buzón, marcado como
-    cancelado, para que se enteren (y pueden quitarlo de ahí).
-    """
-    ahora = _ahora(ahora)
-    with _conexion() as con, con.transaccion():
-        fila = con.bloquear_aviso(aviso_id)
-        if fila is None:
-            raise ErrorValidacion("Este aviso no existe.")
-        aviso = _fila_a_aviso(fila, [])
-        if como_admin and not es_admin(persona_id):
-            raise ErrorValidacion("No tienes permiso de administración.")
-        if not como_admin and not aviso.es_de(persona_id):
-            raise ErrorValidacion("Solo quien publicó el aviso puede eliminarlo.")
-        if aviso.cancelado:
-            raise ErrorValidacion("Este aviso ya estaba eliminado.")
-        por = "dueño" if aviso.es_de(persona_id) else "admin"
-        con.ejecutar(
-            "UPDATE avisos SET cancelado_en = ?, cancelado_por = ? WHERE id = ?",
-            (_a_ts(ahora), por, aviso_id),
-        )
-        con.ejecutar("UPDATE denuncias SET revisada = 1 WHERE aviso_id = ?", (aviso_id,))
-    _invalidar_cache()
-
-    actualizado = obtener_aviso(aviso_id)
-    assert actualizado is not None
-    return actualizado
-
 
 # --------------------------------------------------------------------------- #
-# Administración (panel /admin)
-# --------------------------------------------------------------------------- #
-
-DIAS_REGISTRO_FILTRADOS = 30  # cuánto tiempo se guardan los bloqueos
-LARGO_MAX_REGLA = 60
-
-
-def _separar(texto: str | None) -> tuple[str, ...]:
-    """'chupa, chupen ,mi' -> ('chupa', 'chupen', 'mi')"""
-    partes = (limpiar(p) for p in (texto or "").replace("\n", ",").split(","))
-    return tuple(dict.fromkeys(p for p in partes if p))
-
-
-def _fila_a_regla(fila) -> filtro.Regla:
-    return filtro.Regla(
-        id=int(fila["id"]),
-        palabra=fila["palabra"],
-        cerca_de=_separar(fila["cerca_de"]),
-        excepto=_separar(fila["excepto"]),
-    )
-
-
-def reglas() -> list[filtro.Regla]:
-    """Las reglas propias del filtro, de la más nueva a la más antigua."""
-    with _conexion() as con:
-        filas = con.ejecutar("SELECT * FROM reglas_filtro ORDER BY id DESC").fetchall()
-    return [_fila_a_regla(f) for f in filas]
-
-
-def _cargar_reglas() -> None:
-    filtro.configurar(reglas())
-    _invalidar_cache()  # lo que se muestra se vuelve a filtrar con las reglas nuevas
-
-
-def agregar_regla(
-    palabra: str, cerca_de: str = "", excepto: str = "", ahora: datetime | None = None
-) -> filtro.Regla:
-    """
-    Agrega una palabra o frase al filtro. Vale al instante para todos.
-    cerca_de: palabras de contexto separadas por coma (vacío = se filtra siempre).
-    excepto: frases separadas por coma donde nunca se filtra.
-    """
-    palabra = limpiar(palabra)
-    _validar_largo(palabra, "Palabra o frase", 2, LARGO_MAX_REGLA)
-    if not any(c.isalnum() for c in palabra):
-        raise ErrorValidacion("Palabra o frase: escribe letras.")
-    cerca, fuera = _separar(cerca_de), _separar(excepto)
-    with _conexion() as con:
-        nuevo_id = con.insertar(
-            "INSERT INTO reglas_filtro (palabra, cerca_de, excepto, creada_en) VALUES (?, ?, ?, ?)",
-            (palabra, ", ".join(cerca), ", ".join(fuera), _a_ts(_ahora(ahora))),
-        )
-    _cargar_reglas()
-    return filtro.Regla(int(nuevo_id), palabra, cerca, fuera)
-
-
-def borrar_regla(regla_id: int) -> None:
-    with _conexion() as con:
-        con.ejecutar("DELETE FROM reglas_filtro WHERE id = ?", (regla_id,))
-    _cargar_reglas()
-
-
-@dataclass(frozen=True)
-class Filtrado:
-    id: int
-    momento: datetime
-    campo: str
-    texto: str
-    palabras: tuple[str, ...]
-
-
-def registrar_filtrado(
-    campo: str,
-    texto: str,
-    palabras: list[str],
-    persona_id: str | None,
-    ahora: datetime | None = None,
-) -> None:
-    """Anota un intento bloqueado por el filtro. Si falla, no interrumpe a la persona."""
-    ts = _a_ts(_ahora(ahora))
-    try:
-        with _conexion() as con:
-            con.ejecutar(
-                "INSERT INTO filtrados (momento, campo, texto, palabras, persona_id) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (ts, campo, (texto or "")[:LARGO_MAX_DESCRIPCION], ", ".join(palabras), persona_id),
-            )
-            con.ejecutar(
-                "DELETE FROM filtrados WHERE momento < ?",
-                (ts - DIAS_REGISTRO_FILTRADOS * 86400,),
-            )
-    except Exception as error:  # el registro es secundario
-        print(f"[filtro] no se pudo registrar el bloqueo: {error}", flush=True)
-
-
-def filtrados_recientes(limite: int = 100) -> list[Filtrado]:
-    with _conexion() as con:
-        filas = con.ejecutar(
-            "SELECT * FROM filtrados ORDER BY momento DESC, id DESC LIMIT ?", (limite,)
-        ).fetchall()
-    return [
-        Filtrado(
-            id=int(f["id"]),
-            momento=_de_ts(f["momento"]),
-            campo=f["campo"],
-            texto=f["texto"],
-            palabras=_separar(f["palabras"]),
-        )
-        for f in filas
-    ]
-
-
-def borrar_filtrados() -> None:
-    with _conexion() as con:
-        con.ejecutar("DELETE FROM filtrados")
-
-
-def es_admin(persona_id: str | None) -> bool:
-    if not persona_id:
-        return False
-    with _conexion() as con:
-        fila = con.ejecutar(
-            "SELECT persona_id FROM administradores WHERE persona_id = ?", (persona_id,)
-        ).fetchone()
-    return fila is not None
-
-
-def agregar_admin(persona_id: str | None, ahora: datetime | None = None) -> None:
-    if not persona_id:
-        raise ErrorValidacion("No pudimos reconocer tu navegador. Recarga la página.")
-    if es_admin(persona_id):
-        return
-    with _conexion() as con:
-        con.ejecutar(
-            "INSERT INTO administradores (persona_id, desde) VALUES (?, ?)",
-            (persona_id, _a_ts(_ahora(ahora))),
-        )
-
-
-def quitar_admin(persona_id: str | None) -> None:
-    with _conexion() as con:
-        con.ejecutar("DELETE FROM administradores WHERE persona_id = ?", (persona_id,))
-
-
-def todos_los_avisos(limite: int = 60) -> list[Aviso]:
-    """Los últimos avisos publicados, abiertos o no (para moderar)."""
-    with _conexion() as con:
-        return _leer_avisos(con, "SELECT * FROM avisos ORDER BY id DESC LIMIT ?", (limite,))
-
-
-def estadisticas(ahora: datetime | None = None) -> dict[str, int]:
-    ahora = _ahora(ahora)
-    semana = _a_ts(ahora) - 7 * 86400
-    consultas = {
-        "publicados_7d": ("SELECT COUNT(*) AS n FROM avisos WHERE creado_en > ?", (semana,)),
-        "unidos_7d": ("SELECT COUNT(*) AS n FROM participantes WHERE unido_en > ?", (semana,)),
-        "cancelados_7d": ("SELECT COUNT(*) AS n FROM avisos WHERE cancelado_en > ?", (semana,)),
-        "bloqueos_7d": ("SELECT COUNT(*) AS n FROM filtrados WHERE momento > ?", (semana,)),
-        "avisos_total": ("SELECT COUNT(*) AS n FROM avisos", ()),
-        "reglas": ("SELECT COUNT(*) AS n FROM reglas_filtro", ()),
-        "denuncias_pendientes": (
-            "SELECT COUNT(DISTINCT aviso_id) AS n FROM denuncias WHERE revisada = 0", ()
-        ),
-    }
-    with _conexion() as con:
-        cifras = {k: int(con.ejecutar(sql, par).fetchone()["n"]) for k, (sql, par) in consultas.items()}
-    cifras["abiertos"] = len(avisos_activos(ahora))
-    return cifras
-
-
-def quitar_todos_los_admin() -> int:
-    """Cierra la sesión de administración en todos los navegadores. Devuelve cuántas había."""
-    with _conexion() as con:
-        n = int(con.ejecutar("SELECT COUNT(*) AS n FROM administradores").fetchone()["n"])
-        con.ejecutar("DELETE FROM administradores")
-    return n
-
-
-# --------------------------------------------------------------------------- #
-# Comentarios
+# Comentarios, denuncias y reglas del filtro (modelos)
 # --------------------------------------------------------------------------- #
 
 LARGO_MAX_COMENTARIO = 200
@@ -1207,109 +669,6 @@ class Comentario:
     texto: str
     momento: datetime
 
-
-def comentarios_de(aviso_id: int) -> list[Comentario]:
-    """Comentarios visibles de un aviso, del más antiguo al más nuevo."""
-    with _conexion() as con:
-        filas = con.ejecutar(
-            "SELECT * FROM comentarios WHERE aviso_id = ? AND borrado = 0 ORDER BY momento, id",
-            (aviso_id,),
-        ).fetchall()
-    resultado = []
-    for f in filas:
-        texto = filtro.quitar(f["texto"])  # por si se agregó una regla después
-        if texto:
-            resultado.append(
-                Comentario(
-                    id=int(f["id"]),
-                    aviso_id=int(f["aviso_id"]),
-                    persona_id=f["persona_id"],
-                    nombre=filtro.quitar(f["nombre"]),
-                    texto=texto,
-                    momento=_de_ts(f["momento"]),
-                )
-            )
-    return resultado
-
-
-def comentar(
-    aviso_id: int,
-    persona_id: str | None,
-    nombre: str,
-    texto: str,
-    ahora: datetime | None = None,
-) -> Comentario:
-    """Publica un comentario corto. Quien organiza no necesita nombre."""
-    ahora = _ahora(ahora)
-    if not persona_id:
-        raise ErrorValidacion("No pudimos reconocer tu navegador. Recarga la página.")
-    texto = limpiar(texto)
-    if not texto:
-        raise ErrorValidacion("Escribe un comentario.")
-    if len(texto) > LARGO_MAX_COMENTARIO:
-        raise ErrorValidacion(f"El comentario puede tener hasta {LARGO_MAX_COMENTARIO} caracteres.")
-
-    aviso = obtener_aviso(aviso_id)
-    if aviso is None:
-        raise ErrorValidacion("Este aviso no existe.")
-    if aviso.cancelado:
-        raise ErrorValidacion("Este aviso fue cancelado: ya no se puede comentar.")
-    if ahora >= aviso.visible_en_buzon_hasta:
-        raise ErrorValidacion("Los comentarios de este aviso ya están cerrados.")
-
-    if aviso.es_de(persona_id):
-        nombre = ""
-    else:
-        nombre = limpiar(nombre)
-        _validar_largo(nombre, "Tu nombre", *LARGO_NOMBRE)
-        if filtro.contiene(nombre):
-            registrar_filtrado("Nombre", nombre, filtro.encontradas(nombre), persona_id)
-            raise ErrorValidacion(
-                "Ese nombre tiene palabras inapropiadas. Usa tu nombre real o un apodo amable."
-            )
-    malas = filtro.encontradas(texto)
-    if malas:
-        registrar_filtrado("Comentario", texto, malas, persona_id)
-        lista = ", ".join(f"«{m}»" for m in malas)
-        raise ErrorValidacion(
-            f"Tu comentario tiene palabras inapropiadas ({lista}). Cámbialas para poder enviarlo."
-        )
-
-    ts = _a_ts(ahora)
-    with _conexion() as con:
-        reciente = con.ejecutar(
-            "SELECT COUNT(*) AS n FROM comentarios WHERE persona_id = ? AND momento > ?",
-            (persona_id, ts - SEGUNDOS_ENTRE_COMENTARIOS),
-        ).fetchone()
-        if int(reciente["n"]) > 0:
-            raise ErrorValidacion("Espera unos segundos antes de comentar de nuevo.")
-        nuevo_id = con.insertar(
-            "INSERT INTO comentarios (aviso_id, persona_id, nombre, texto, momento) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (aviso_id, persona_id, nombre, texto, ts),
-        )
-    _invalidar_cache()
-    return Comentario(int(nuevo_id), aviso_id, persona_id, nombre, texto, ahora)
-
-
-def borrar_comentario(comentario_id: int, persona_id: str | None, como_admin: bool = False) -> None:
-    """Cada persona puede borrar sus comentarios; la administración, cualquiera."""
-    with _conexion() as con:
-        fila = con.ejecutar(
-            "SELECT persona_id FROM comentarios WHERE id = ? AND borrado = 0", (comentario_id,)
-        ).fetchone()
-        if fila is None:
-            raise ErrorValidacion("Ese comentario ya no existe.")
-        es_suyo = bool(persona_id) and fila["persona_id"] == persona_id
-        if not es_suyo and not (como_admin and es_admin(persona_id)):
-            raise ErrorValidacion("Solo puedes borrar tus propios comentarios.")
-        con.ejecutar("UPDATE comentarios SET borrado = 1 WHERE id = ?", (comentario_id,))
-    _invalidar_cache()
-
-
-# --------------------------------------------------------------------------- #
-# Denuncias
-# --------------------------------------------------------------------------- #
 
 UMBRAL_DENUNCIAS = 3  # con tantas denuncias sin revisar, el aviso sale del tablero
 LARGO_MAX_DENUNCIA = 300
@@ -1335,76 +694,853 @@ class Denuncia:
         return MOTIVOS_DENUNCIA.get(self.motivo, "Otro motivo")
 
 
-def denunciar(
-    aviso_id: int,
-    persona_id: str | None,
-    motivo: str | None,
-    comentario: str = "",
-    ahora: datetime | None = None,
-) -> None:
-    """Denuncia un aviso ajeno (una vez por navegador)."""
-    ahora = _ahora(ahora)
+def _separar(texto: str | None) -> tuple[str, ...]:
+    """'chupa, chupen ,mi' -> ('chupa', 'chupen', 'mi')"""
+    partes = (limpiar(p) for p in (texto or "").replace("\n", ",").split(","))
+    return tuple(dict.fromkeys(p for p in partes if p))
+
+
+def _fila_a_regla(fila) -> filtro.Regla:
+    return filtro.Regla(
+        id=int(fila["id"]),
+        palabra=fila["palabra"],
+        cerca_de=_separar(fila["cerca_de"]),
+        excepto=_separar(fila["excepto"]),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Estudiantes (los escribe Acceso; aquí solo se leen sus nombres)
+# --------------------------------------------------------------------------- #
+
+
+def nombre_de_estudiante(con: _Conexion, persona_id: str | None) -> str | None:
+    """El nombre con que se registró el estudiante, o None si no ha ingresado."""
     if not persona_id:
-        raise ErrorValidacion("No pudimos reconocer tu navegador. Recarga la página.")
-    if motivo not in MOTIVOS_DENUNCIA:
-        raise ErrorValidacion("Elige un motivo.")
-    comentario = limpiar(comentario)
-    if len(comentario) > LARGO_MAX_DENUNCIA:
-        raise ErrorValidacion(f"El comentario puede tener hasta {LARGO_MAX_DENUNCIA} caracteres.")
-
-    aviso = obtener_aviso(aviso_id)
-    if aviso is None:
-        raise ErrorValidacion("Este aviso no existe.")
-    if aviso.cancelado:
-        raise ErrorValidacion("Este aviso ya fue eliminado.")
-    if aviso.es_de(persona_id):
-        raise ErrorValidacion("No puedes denunciar tu propio aviso.")
-
-    with _conexion() as con:
-        ya = con.ejecutar(
-            "SELECT COUNT(*) AS n FROM denuncias WHERE aviso_id = ? AND persona_id = ?",
-            (aviso_id, persona_id),
-        ).fetchone()
-        if int(ya["n"]) > 0:
-            raise ErrorValidacion("Ya denunciaste este aviso. Gracias, la administración lo revisará.")
-        con.ejecutar(
-            "INSERT INTO denuncias (aviso_id, persona_id, motivo, comentario, momento) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (aviso_id, persona_id, motivo, comentario, _a_ts(ahora)),
-        )
-    _invalidar_cache()
+        return None
+    fila = con.ejecutar("SELECT nombre FROM estudiantes WHERE persona_id = ?", (persona_id,)).fetchone()
+    return fila["nombre"] if fila else None
 
 
-def denuncias_pendientes() -> list[tuple[Aviso, list[Denuncia]]]:
-    """Avisos con denuncias sin revisar, del más denunciado al menos."""
-    with _conexion() as con:
-        filas = con.ejecutar(
-            "SELECT * FROM denuncias WHERE revisada = 0 ORDER BY momento DESC, id DESC"
-        ).fetchall()
-        por_aviso: dict[int, list[Denuncia]] = {}
-        for f in filas:
-            por_aviso.setdefault(int(f["aviso_id"]), []).append(
-                Denuncia(
-                    id=int(f["id"]),
-                    aviso_id=int(f["aviso_id"]),
-                    motivo=f["motivo"],
-                    comentario=f["comentario"],
-                    momento=_de_ts(f["momento"]),
-                )
+# --------------------------------------------------------------------------- #
+# GestorAvisos: reglas de cupos, plazos y validaciones
+# --------------------------------------------------------------------------- #
+
+
+class GestorAvisos:
+    """
+    «control» Aplica las reglas de los avisos (cupos, plazos, validaciones) y
+    los guarda. Mantiene en memoria los avisos que muestra el tablero, para no
+    consultar la base de datos cada pocos segundos: cada página abierta revisa
+    si hubo cambios, y la memoria solo se vuelve a leer cuando alguien publica,
+    se une o comenta (la app corre en un solo proceso, como corre NiceGUI).
+    """
+
+    DURACIONES_PERMITIDAS = DURACIONES_PERMITIDAS
+    MAX_PERSONAS = MAX_PERSONAS
+    HORAS_EN_BUZON_TRAS_INICIO = HORAS_EN_BUZON_TRAS_INICIO
+    LARGO_TITULO = LARGO_TITULO
+    LARGO_MAX_DESCRIPCION = LARGO_MAX_DESCRIPCION
+    VALOR_MAXIMO = VALOR_MAXIMO
+    CATEGORIAS = CATEGORIAS
+
+    def __init__(self, filtro_palabras: filtro.FiltroPalabras) -> None:
+        self.__filtro = filtro_palabras
+        self.__candado = threading.Lock()
+        self.__version = 0
+        self.__cache_activos: tuple[datetime, list[Aviso]] | None = None
+        self.__cache_detalle: dict[int, Aviso] = {}
+        self.__cache_buzon: dict[str, tuple[datetime, list[Aviso], list[Aviso]]] = {}
+
+    # ------------------------------------------------------------------ #
+    # Apoyo interno
+    # ------------------------------------------------------------------ #
+
+    def _invalidar_cache(self) -> None:
+        with self.__candado:
+            self.__version += 1
+            self.__cache_activos = None
+            self.__cache_detalle.clear()
+            self.__cache_buzon.clear()
+
+    def _sin_groserias(
+        self, texto: str, campo: str, persona_id: str | None = None, plural: bool = False, registro: str = ""
+    ) -> None:
+        """Si hay palabras inapropiadas, las anota en el registro y avisa cuáles cambiar."""
+        malas = self.__filtro.encontradas(texto)
+        if malas:
+            registrar_filtrado(registro or campo, texto, malas, persona_id)
+            lista = ", ".join(f"«{m}»" for m in malas)
+            verbo = "tienen" if plural else "tiene"
+            raise ErrorValidacion(
+                f"{campo} {verbo} palabras inapropiadas ({lista}). Cámbialas para poder publicar."
             )
-        if not por_aviso:
-            return []
-        marcas = ",".join("?" * len(por_aviso))
-        avisos = _leer_avisos(con, f"SELECT * FROM avisos WHERE id IN ({marcas})", list(por_aviso))
-    pares = [(a, por_aviso[a.id]) for a in avisos]
-    pares.sort(key=lambda par: (-len(par[1]), -par[0].id))
-    return pares
 
+    @staticmethod
+    def _nombre_registrado(con: _Conexion, persona_id: str | None) -> str:
+        nombre = nombre_de_estudiante(con, persona_id)
+        if not nombre:
+            raise ErrorValidacion("Ingresa con tu correo institucional para continuar.")
+        return nombre
 
-def descartar_denuncias(aviso_id: int) -> None:
-    """Marca como revisadas las denuncias de un aviso (vuelve al tablero si estaba oculto)."""
-    with _conexion() as con:
-        con.ejecutar(
-            "UPDATE denuncias SET revisada = 1 WHERE aviso_id = ? AND revisada = 0", (aviso_id,)
+    # ------------------------------------------------------------------ #
+    # Publicar y leer avisos
+    # ------------------------------------------------------------------ #
+
+    def crear_aviso(
+        self, datos: dict | None = None, persona_id: str | None = None, *, ahora: datetime | None = None, **campos
+    ) -> Aviso:
+        """
+        Valida los datos y publica el aviso. Lanza ErrorValidacion si algo falla.
+        Los datos llegan en un diccionario (titulo, categoria, lugar,
+        inicio_evento, personas_actuales, personas_necesarias, duracion_horas,
+        descripcion, lat, lng, valor) o como argumentos con esos nombres.
+        """
+        campos = {**(datos or {}), **campos}
+        if persona_id is not None:
+            campos["creador_id"] = persona_id
+        return self._publicar(ahora=ahora, **campos)
+
+    def _publicar(
+        self,
+        *,
+        titulo: str,
+        categoria: str,
+        lugar: str,
+        inicio_evento: datetime,
+        personas_actuales,
+        personas_necesarias,
+        duracion_horas,
+        descripcion: str = "",
+        creador_id: str | None = None,
+        creador: str = "",
+        lat: float | None = None,
+        lng: float | None = None,
+        valor: int | str | None = None,
+        ahora: datetime | None = None,
+    ) -> Aviso:
+        ahora = _ahora(ahora)
+
+        titulo = limpiar(titulo)
+        lugar = limpiar(lugar)
+        creador = limpiar(creador)[: LARGO_NOMBRE[1]]
+        descripcion = (descripcion or "").strip()
+
+        # Se valida en el mismo orden en que aparecen los campos del formulario.
+        _validar_largo(titulo, "Título", *self.LARGO_TITULO)
+        self._sin_groserias(titulo, "El título", creador_id, registro="Título")
+        if categoria not in self.CATEGORIAS:
+            raise ErrorValidacion("Elige una categoría.")
+        _validar_largo(lugar, "Lugar", *LARGO_LUGAR)
+        self._sin_groserias(lugar, "El lugar", creador_id, registro="Lugar")
+        lat, lng = _validar_ubicacion(lat, lng)
+        creador = self.__filtro.quitar(creador)
+
+        if inicio_evento.tzinfo is None:
+            inicio_evento = inicio_evento.replace(tzinfo=ZONA_HORARIA)
+        if inicio_evento <= ahora:
+            raise ErrorValidacion("La fecha y hora del evento ya pasaron.")
+        if inicio_evento > ahora + timedelta(days=365):
+            raise ErrorValidacion("El evento debe ser dentro del próximo año.")
+
+        actuales = _a_entero(personas_actuales, "¿Cuántos son ahora?")
+        necesarias = _a_entero(personas_necesarias, "¿Cuántos necesitan en total?")
+        if actuales < 1:
+            raise ErrorValidacion("Ustedes son al menos 1 (tú).")
+        if necesarias > self.MAX_PERSONAS:
+            raise ErrorValidacion(f"El máximo es {self.MAX_PERSONAS} personas por aviso.")
+        if necesarias <= actuales:
+            raise ErrorValidacion(
+                "El total que necesitan debe ser mayor a los que ya son "
+                "(si no, ¡no falta nadie!)."
+            )
+
+        valor = None if valor is None else parsear_valor(valor)
+
+        if len(descripcion) > self.LARGO_MAX_DESCRIPCION:
+            raise ErrorValidacion(f"Detalles: máximo {self.LARGO_MAX_DESCRIPCION} caracteres.")
+        self._sin_groserias(descripcion, "Los detalles", creador_id, plural=True, registro="Detalles")
+
+        duracion = _a_entero(duracion_horas, "Duración del aviso")
+        if duracion not in self.DURACIONES_PERMITIDAS:
+            raise ErrorValidacion("El aviso puede durar 24 o 48 horas.")
+
+        expira_en = ahora + timedelta(hours=duracion)
+
+        with _conexion() as con:
+            # Con sesión iniciada, el aviso dice «Organiza <nombre registrado>».
+            creador = nombre_de_estudiante(con, creador_id) or creador
+            nuevo_id = con.insertar(
+                """
+                INSERT INTO avisos (titulo, categoria, descripcion, lugar, inicio_evento,
+                                    personas_actuales, personas_necesarias, creador,
+                                    creador_id, duracion_horas, creado_en, expira_en, lat, lng,
+                                    valor)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    titulo,
+                    categoria,
+                    descripcion,
+                    lugar,
+                    _a_ts(inicio_evento),
+                    actuales,
+                    necesarias,
+                    creador,
+                    creador_id or None,
+                    duracion,
+                    _a_ts(ahora),
+                    _a_ts(expira_en),
+                    lat,
+                    lng,
+                    valor,
+                ),
+            )
+        self._invalidar_cache()
+
+        aviso = self.obtener_aviso(nuevo_id)
+        assert aviso is not None
+        return aviso
+
+    def obtener_aviso(self, aviso_id: int) -> Aviso | None:
+        """Devuelve el aviso (abierto o cerrado) o None si no existe."""
+        with self.__candado:
+            if aviso_id in self.__cache_detalle:
+                return self.__cache_detalle[aviso_id]
+            version = self.__version
+
+        with _conexion() as con:
+            encontrados = _leer_avisos(con, "SELECT * FROM avisos WHERE id = ?", (aviso_id,))
+        if not encontrados:
+            return None
+        aviso = encontrados[0]
+
+        with self.__candado:
+            if version == self.__version:  # nadie escribió mientras leíamos
+                self.__cache_detalle[aviso_id] = aviso
+        return aviso
+
+    def avisos_activos(self, ahora: datetime | None = None) -> list[Aviso]:
+        """Tablero público: avisos con cupo y dentro de plazo, del más próximo al más lejano."""
+        ahora = _ahora(ahora)
+
+        with self.__candado:
+            guardado, version = self.__cache_activos, self.__version
+
+        if guardado is None or ahora < guardado[0]:
+            ts = _a_ts(ahora)
+            with _conexion() as con:
+                lista = _leer_avisos(
+                    con,
+                    """
+                    SELECT a.*
+                    FROM avisos a
+                    LEFT JOIN participantes p ON p.aviso_id = a.id
+                    WHERE a.expira_en > ? AND a.inicio_evento > ? AND a.cancelado_en IS NULL
+                      AND (SELECT COUNT(*) FROM denuncias d
+                           WHERE d.aviso_id = a.id AND d.revisada = 0) < ?
+                    GROUP BY a.id
+                    HAVING a.personas_actuales + COUNT(p.id) < a.personas_necesarias
+                    ORDER BY a.inicio_evento ASC, a.id ASC
+                    """,
+                    (ts, ts, UMBRAL_DENUNCIAS),
+                )
+            with self.__candado:
+                if version == self.__version:
+                    self.__cache_activos = (ahora, lista)
+        else:
+            lista = guardado[1]
+
+        # Lo que se cerró por tiempo desde la última lectura se filtra aquí.
+        return [a for a in lista if a.esta_abierto(ahora)]
+
+    def mi_buzon(self, persona_id: str | None, ahora: datetime | None = None) -> tuple[list[Aviso], list[Aviso]]:
+        """
+        Devuelve (me_uni, organizo) para el buzón de un estudiante.
+
+        * me_uni: avisos a los que se unió, hasta unas horas después del evento.
+        * organizo: avisos que publicó, hasta que se cumple su plazo de 24/48 h
+          (aunque ya se hayan llenado).
+        """
+        if not persona_id:
+            return [], []
+        ahora = _ahora(ahora)
+
+        with self.__candado:
+            guardado, version = self.__cache_buzon.get(persona_id), self.__version
+
+        if guardado is None or ahora < guardado[0]:
+            ts = _a_ts(ahora)
+            with _conexion() as con:
+                me_uni = _leer_avisos(
+                    con,
+                    """
+                    SELECT a.* FROM avisos a
+                    JOIN participantes p ON p.aviso_id = a.id
+                    WHERE p.persona_id = ? AND a.inicio_evento > ?
+                    ORDER BY a.inicio_evento ASC, a.id ASC
+                    """,
+                    (persona_id, ts - self.HORAS_EN_BUZON_TRAS_INICIO * 3600),
+                )
+                organizo = _leer_avisos(
+                    con,
+                    """
+                    SELECT * FROM avisos
+                    WHERE creador_id = ? AND expira_en > ? AND cancelado_en IS NULL
+                    ORDER BY inicio_evento ASC, id ASC
+                    """,
+                    (persona_id, ts),
+                )
+            with self.__candado:
+                if version == self.__version:
+                    self.__cache_buzon[persona_id] = (ahora, me_uni, organizo)
+        else:
+            _, me_uni, organizo = guardado
+
+        return (
+            [a for a in me_uni if ahora < a.visible_en_buzon_hasta],
+            [a for a in organizo if ahora < a.expira_en],
         )
-    _invalidar_cache()
+
+    # ------------------------------------------------------------------ #
+    # Unirse, salirse y eliminar
+    # ------------------------------------------------------------------ #
+
+    def unirse(self, aviso_id: int, persona_id: str | None, ahora: datetime | None = None) -> Aviso:
+        """
+        Anota al estudiante en el aviso, con el nombre con que se registró, y
+        devuelve el aviso actualizado.
+
+        Todo ocurre dentro de una transacción que bloquea el aviso: si dos
+        estudiantes presionan "Unirme" al mismo tiempo por el último cupo,
+        solo uno lo consigue.
+        """
+        ahora = _ahora(ahora)
+        with _conexion() as con, con.transaccion():
+            nombre = self._nombre_registrado(con, persona_id)
+            fila = con.bloquear_aviso(aviso_id)
+            if fila is None:
+                raise ErrorValidacion("Este aviso no existe.")
+
+            aviso = _fila_a_aviso(fila, _inscritos_de(con, [aviso_id])[aviso_id])
+            if aviso.es_de(persona_id):
+                raise ErrorValidacion("Este aviso es tuyo: ya cuentas dentro del grupo.")
+            if aviso.tiene_inscrito(persona_id):
+                raise ErrorValidacion("Ya estás anotado en este aviso. Míralo en tu buzón.")
+
+            motivo = aviso.motivo_cierre(ahora)
+            if motivo == CANCELADO:
+                raise ErrorValidacion("Este aviso fue cancelado por quien lo publicó.")
+            if motivo == COMPLETO:
+                raise ErrorValidacion("Llegaste tarde: el grupo ya se completó.")
+            if motivo == INICIADO:
+                raise ErrorValidacion("El evento ya comenzó; el aviso está cerrado.")
+            if motivo == VENCIDO:
+                raise ErrorValidacion("Este aviso ya cerró: se acabó su plazo.")
+
+            con.ejecutar(
+                "INSERT INTO participantes (aviso_id, nombre, persona_id, unido_en) VALUES (?, ?, ?, ?)",
+                (aviso_id, nombre, persona_id, _a_ts(ahora)),
+            )
+        self._invalidar_cache()
+
+        actualizado = self.obtener_aviso(aviso_id)
+        assert actualizado is not None
+        return actualizado
+
+    def salirse(self, aviso_id: int, persona_id: str | None, ahora: datetime | None = None) -> Aviso:
+        """
+        Saca al estudiante de un aviso al que se había unido y devuelve el aviso
+        actualizado. Se puede hasta que empieza el evento. Si el aviso queda con
+        cupo y dentro de plazo, vuelve a aparecer en el tablero.
+        """
+        ahora = _ahora(ahora)
+        if not persona_id:
+            raise ErrorValidacion("Ingresa con tu correo institucional para continuar.")
+
+        with _conexion() as con, con.transaccion():
+            fila = con.bloquear_aviso(aviso_id)
+            if fila is None:
+                raise ErrorValidacion("Este aviso no existe.")
+            aviso = _fila_a_aviso(fila, _inscritos_de(con, [aviso_id])[aviso_id])
+            if not aviso.tiene_inscrito(persona_id):
+                raise ErrorValidacion("No estás anotado en este aviso.")
+            if ahora >= aviso.inicio_evento and not aviso.cancelado:
+                raise ErrorValidacion("El evento ya empezó: ya no puedes salirte desde aquí.")
+            con.ejecutar(
+                "DELETE FROM participantes WHERE aviso_id = ? AND persona_id = ?",
+                (aviso_id, persona_id),
+            )
+        self._invalidar_cache()
+
+        actualizado = self.obtener_aviso(aviso_id)
+        assert actualizado is not None
+        return actualizado
+
+    def eliminar_aviso(
+        self, aviso_id: int, persona_id: str | None, ahora: datetime | None = None, como_admin: bool = False
+    ) -> Aviso:
+        """
+        Quien publicó el aviso lo elimina (o la administración). Desaparece del
+        tablero y del buzón de quien lo publicó; quienes ya se habían unido lo
+        siguen viendo en su buzón, marcado como cancelado, para que se enteren.
+        """
+        ahora = _ahora(ahora)
+        with _conexion() as con, con.transaccion():
+            fila = con.bloquear_aviso(aviso_id)
+            if fila is None:
+                raise ErrorValidacion("Este aviso no existe.")
+            aviso = _fila_a_aviso(fila, [])
+            if como_admin and not es_admin(persona_id):
+                raise ErrorValidacion("No tienes permiso de administración.")
+            if not como_admin and not aviso.es_de(persona_id):
+                raise ErrorValidacion("Solo quien publicó el aviso puede eliminarlo.")
+            if aviso.cancelado:
+                raise ErrorValidacion("Este aviso ya estaba eliminado.")
+            por = "dueño" if aviso.es_de(persona_id) else "admin"
+            con.ejecutar(
+                "UPDATE avisos SET cancelado_en = ?, cancelado_por = ? WHERE id = ?",
+                (_a_ts(ahora), por, aviso_id),
+            )
+            con.ejecutar("UPDATE denuncias SET revisada = 1 WHERE aviso_id = ?", (aviso_id,))
+        self._invalidar_cache()
+
+        actualizado = self.obtener_aviso(aviso_id)
+        assert actualizado is not None
+        return actualizado
+
+    # ------------------------------------------------------------------ #
+    # Comentarios y denuncias
+    # ------------------------------------------------------------------ #
+
+    def comentarios_de(self, aviso_id: int) -> list[Comentario]:
+        """Comentarios visibles de un aviso, del más antiguo al más nuevo."""
+        with _conexion() as con:
+            filas = con.ejecutar(
+                "SELECT * FROM comentarios WHERE aviso_id = ? AND borrado = 0 ORDER BY momento, id",
+                (aviso_id,),
+            ).fetchall()
+        resultado = []
+        for f in filas:
+            texto = self.__filtro.quitar(f["texto"])  # por si se agregó una regla después
+            if texto:
+                resultado.append(
+                    Comentario(
+                        id=int(f["id"]),
+                        aviso_id=int(f["aviso_id"]),
+                        persona_id=f["persona_id"],
+                        nombre=self.__filtro.quitar(f["nombre"]),
+                        texto=texto,
+                        momento=_de_ts(f["momento"]),
+                    )
+                )
+        return resultado
+
+    def comentar(
+        self, aviso_id: int, persona_id: str | None, texto: str, ahora: datetime | None = None
+    ) -> Comentario:
+        """Publica un comentario corto con el nombre del estudiante. Quien organiza
+        aparece como «Quien organiza»."""
+        ahora = _ahora(ahora)
+        if not persona_id:
+            raise ErrorValidacion("Ingresa con tu correo institucional para continuar.")
+        texto = limpiar(texto)
+        if not texto:
+            raise ErrorValidacion("Escribe un comentario.")
+        if len(texto) > LARGO_MAX_COMENTARIO:
+            raise ErrorValidacion(f"El comentario puede tener hasta {LARGO_MAX_COMENTARIO} caracteres.")
+
+        aviso = self.obtener_aviso(aviso_id)
+        if aviso is None:
+            raise ErrorValidacion("Este aviso no existe.")
+        if aviso.cancelado:
+            raise ErrorValidacion("Este aviso fue cancelado: ya no se puede comentar.")
+        if ahora >= aviso.visible_en_buzon_hasta:
+            raise ErrorValidacion("Los comentarios de este aviso ya están cerrados.")
+
+        malas = self.__filtro.encontradas(texto)
+        if malas:
+            registrar_filtrado("Comentario", texto, malas, persona_id)
+            lista = ", ".join(f"«{m}»" for m in malas)
+            raise ErrorValidacion(
+                f"Tu comentario tiene palabras inapropiadas ({lista}). Cámbialas para poder enviarlo."
+            )
+
+        ts = _a_ts(ahora)
+        with _conexion() as con:
+            nombre = "" if aviso.es_de(persona_id) else self._nombre_registrado(con, persona_id)
+            reciente = con.ejecutar(
+                "SELECT COUNT(*) AS n FROM comentarios WHERE persona_id = ? AND momento > ?",
+                (persona_id, ts - SEGUNDOS_ENTRE_COMENTARIOS),
+            ).fetchone()
+            if int(reciente["n"]) > 0:
+                raise ErrorValidacion("Espera unos segundos antes de comentar de nuevo.")
+            nuevo_id = con.insertar(
+                "INSERT INTO comentarios (aviso_id, persona_id, nombre, texto, momento) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (aviso_id, persona_id, nombre, texto, ts),
+            )
+        self._invalidar_cache()
+        return Comentario(int(nuevo_id), aviso_id, persona_id, nombre, texto, ahora)
+
+    def borrar_comentario(self, comentario_id: int, persona_id: str | None, como_admin: bool = False) -> None:
+        """Cada estudiante puede borrar sus comentarios; la administración, cualquiera."""
+        with _conexion() as con:
+            fila = con.ejecutar(
+                "SELECT persona_id FROM comentarios WHERE id = ? AND borrado = 0", (comentario_id,)
+            ).fetchone()
+            if fila is None:
+                raise ErrorValidacion("Ese comentario ya no existe.")
+            es_suyo = bool(persona_id) and fila["persona_id"] == persona_id
+            if not es_suyo and not (como_admin and es_admin(persona_id)):
+                raise ErrorValidacion("Solo puedes borrar tus propios comentarios.")
+            con.ejecutar("UPDATE comentarios SET borrado = 1 WHERE id = ?", (comentario_id,))
+        self._invalidar_cache()
+
+    def denunciar(
+        self,
+        aviso_id: int,
+        persona_id: str | None,
+        motivo: str | None,
+        comentario: str = "",
+        ahora: datetime | None = None,
+    ) -> None:
+        """Denuncia un aviso ajeno (una vez por estudiante)."""
+        ahora = _ahora(ahora)
+        if not persona_id:
+            raise ErrorValidacion("Ingresa con tu correo institucional para continuar.")
+        if motivo not in MOTIVOS_DENUNCIA:
+            raise ErrorValidacion("Elige un motivo.")
+        comentario = limpiar(comentario)
+        if len(comentario) > LARGO_MAX_DENUNCIA:
+            raise ErrorValidacion(f"El comentario puede tener hasta {LARGO_MAX_DENUNCIA} caracteres.")
+
+        aviso = self.obtener_aviso(aviso_id)
+        if aviso is None:
+            raise ErrorValidacion("Este aviso no existe.")
+        if aviso.cancelado:
+            raise ErrorValidacion("Este aviso ya fue eliminado.")
+        if aviso.es_de(persona_id):
+            raise ErrorValidacion("No puedes denunciar tu propio aviso.")
+
+        with _conexion() as con:
+            ya = con.ejecutar(
+                "SELECT COUNT(*) AS n FROM denuncias WHERE aviso_id = ? AND persona_id = ?",
+                (aviso_id, persona_id),
+            ).fetchone()
+            if int(ya["n"]) > 0:
+                raise ErrorValidacion("Ya denunciaste este aviso. Gracias, la administración lo revisará.")
+            con.ejecutar(
+                "INSERT INTO denuncias (aviso_id, persona_id, motivo, comentario, momento) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (aviso_id, persona_id, motivo, comentario, _a_ts(ahora)),
+            )
+        self._invalidar_cache()
+
+
+# --------------------------------------------------------------------------- #
+# Administracion: clave del panel, denuncias, filtro y moderación
+# --------------------------------------------------------------------------- #
+
+ESTADOS_ADMIN = {
+    None: "Abierto",
+    COMPLETO: "Completo",
+    INICIADO: "Ya empezó",
+    VENCIDO: "Plazo cumplido",
+}
+
+
+@dataclass(frozen=True)
+class Filtrado:
+    id: int
+    momento: datetime
+    campo: str
+    texto: str
+    palabras: tuple[str, ...]
+
+
+class Administracion:
+    """
+    «control» Lo que hace quien administra la página: entrar al panel /admin
+    con la clave (con límite de intentos), revisar denuncias, mantener el
+    filtro y moderar avisos.
+    """
+
+    MAX_INTENTOS = 5  # intentos fallidos permitidos…
+    MINUTOS_BLOQUEO = 15  # …cada tantos minutos, por dirección IP
+    ESTADOS_ADMIN = ESTADOS_ADMIN
+    UMBRAL_DENUNCIAS = UMBRAL_DENUNCIAS
+    LARGO_MAX_DENUNCIA = LARGO_MAX_DENUNCIA
+    MOTIVOS_DENUNCIA = MOTIVOS_DENUNCIA
+    DIAS_REGISTRO_FILTRADOS = 30  # cuánto tiempo se guardan los bloqueos
+    LARGO_MAX_REGLA = 60
+
+    def __init__(self, gestor: GestorAvisos, filtro_palabras: filtro.FiltroPalabras, clave: str = "") -> None:
+        self.__gestor = gestor
+        self.__filtro = filtro_palabras
+        self.__CLAVE_ADMIN = clave
+        self.__intentos_fallidos: dict[str, list[float]] = {}
+
+    # ------------------------------------------------------------------ #
+    # Clave del panel
+    # ------------------------------------------------------------------ #
+
+    def usar_clave(self, clave: str) -> None:
+        """Cambia la clave del panel (la página la lee de la variable CLAVE_ADMIN)."""
+        self.__CLAVE_ADMIN = clave or ""
+        self.__intentos_fallidos.clear()
+
+    @property
+    def hay_clave(self) -> bool:
+        return bool(self.__CLAVE_ADMIN)
+
+    def clave_correcta(self, clave: str | None) -> bool:
+        return bool(self.__CLAVE_ADMIN) and hmac.compare_digest(
+            (clave or "").encode(), self.__CLAVE_ADMIN.encode()
+        )
+
+    def _demasiados_intentos(self, quien: str) -> bool:
+        limite = time.time() - self.MINUTOS_BLOQUEO * 60
+        recientes = [t for t in self.__intentos_fallidos.get(quien, []) if t > limite]
+        self.__intentos_fallidos[quien] = recientes
+        return len(recientes) >= self.MAX_INTENTOS
+
+    def _anotar_intento_fallido(self, quien: str) -> None:
+        self.__intentos_fallidos.setdefault(quien, []).append(time.time())
+
+    def entrar(self, persona_id: str | None, clave: str | None, quien: str) -> None:
+        """
+        Deja como administrador a quien escribe la clave correcta. «quien» es
+        su dirección IP: con 5 intentos fallidos espera 15 minutos.
+        """
+        if self._demasiados_intentos(quien):
+            raise ErrorValidacion(f"Demasiados intentos. Espera {self.MINUTOS_BLOQUEO} minutos.")
+        if not self.clave_correcta(clave):
+            self._anotar_intento_fallido(quien)
+            raise ErrorValidacion("Clave incorrecta.")
+        self.agregar_admin(persona_id)
+
+    def es_admin(self, persona_id: str | None) -> bool:
+        if not persona_id:
+            return False
+        with _conexion() as con:
+            fila = con.ejecutar(
+                "SELECT persona_id FROM administradores WHERE persona_id = ?", (persona_id,)
+            ).fetchone()
+        return fila is not None
+
+    def agregar_admin(self, persona_id: str | None, ahora: datetime | None = None) -> None:
+        if not persona_id:
+            raise ErrorValidacion("No pudimos reconocer tu navegador. Recarga la página.")
+        if self.es_admin(persona_id):
+            return
+        with _conexion() as con:
+            con.ejecutar(
+                "INSERT INTO administradores (persona_id, desde) VALUES (?, ?)",
+                (persona_id, _a_ts(_ahora(ahora))),
+            )
+
+    def quitar_admin(self, persona_id: str | None) -> None:
+        with _conexion() as con:
+            con.ejecutar("DELETE FROM administradores WHERE persona_id = ?", (persona_id,))
+
+    def quitar_todos_los_admin(self) -> int:
+        """Cierra la sesión de administración en todos los navegadores. Devuelve cuántas había."""
+        with _conexion() as con:
+            n = int(con.ejecutar("SELECT COUNT(*) AS n FROM administradores").fetchone()["n"])
+            con.ejecutar("DELETE FROM administradores")
+        return n
+
+    # ------------------------------------------------------------------ #
+    # Moderación
+    # ------------------------------------------------------------------ #
+
+    def todos_los_avisos(self, limite: int = 60) -> list[Aviso]:
+        """Los últimos avisos publicados, abiertos o no (para moderar)."""
+        with _conexion() as con:
+            return _leer_avisos(con, "SELECT * FROM avisos ORDER BY id DESC LIMIT ?", (limite,))
+
+    def estadisticas(self, ahora: datetime | None = None) -> dict[str, int]:
+        ahora = _ahora(ahora)
+        semana = _a_ts(ahora) - 7 * 86400
+        consultas = {
+            "publicados_7d": ("SELECT COUNT(*) AS n FROM avisos WHERE creado_en > ?", (semana,)),
+            "unidos_7d": ("SELECT COUNT(*) AS n FROM participantes WHERE unido_en > ?", (semana,)),
+            "cancelados_7d": ("SELECT COUNT(*) AS n FROM avisos WHERE cancelado_en > ?", (semana,)),
+            "bloqueos_7d": ("SELECT COUNT(*) AS n FROM filtrados WHERE momento > ?", (semana,)),
+            "avisos_total": ("SELECT COUNT(*) AS n FROM avisos", ()),
+            "reglas": ("SELECT COUNT(*) AS n FROM reglas_filtro", ()),
+            "denuncias_pendientes": (
+                "SELECT COUNT(DISTINCT aviso_id) AS n FROM denuncias WHERE revisada = 0", ()
+            ),
+            "estudiantes": ("SELECT COUNT(*) AS n FROM estudiantes", ()),
+        }
+        with _conexion() as con:
+            cifras = {k: int(con.ejecutar(sql, par).fetchone()["n"]) for k, (sql, par) in consultas.items()}
+        cifras["abiertos"] = len(self.__gestor.avisos_activos(ahora))
+        return cifras
+
+    def denuncias_pendientes(self) -> list[tuple[Aviso, list[Denuncia]]]:
+        """Avisos con denuncias sin revisar, del más denunciado al menos."""
+        with _conexion() as con:
+            filas = con.ejecutar(
+                "SELECT * FROM denuncias WHERE revisada = 0 ORDER BY momento DESC, id DESC"
+            ).fetchall()
+            por_aviso: dict[int, list[Denuncia]] = {}
+            for f in filas:
+                por_aviso.setdefault(int(f["aviso_id"]), []).append(
+                    Denuncia(
+                        id=int(f["id"]),
+                        aviso_id=int(f["aviso_id"]),
+                        motivo=f["motivo"],
+                        comentario=f["comentario"],
+                        momento=_de_ts(f["momento"]),
+                    )
+                )
+            if not por_aviso:
+                return []
+            marcas = ",".join("?" * len(por_aviso))
+            avisos = _leer_avisos(con, f"SELECT * FROM avisos WHERE id IN ({marcas})", list(por_aviso))
+        pares = [(a, por_aviso[a.id]) for a in avisos]
+        pares.sort(key=lambda par: (-len(par[1]), -par[0].id))
+        return pares
+
+    def descartar_denuncias(self, aviso_id: int) -> None:
+        """Marca como revisadas las denuncias de un aviso (vuelve al tablero si estaba oculto)."""
+        with _conexion() as con:
+            con.ejecutar(
+                "UPDATE denuncias SET revisada = 1 WHERE aviso_id = ? AND revisada = 0", (aviso_id,)
+            )
+        self.__gestor._invalidar_cache()
+
+    # ------------------------------------------------------------------ #
+    # Filtro: reglas propias y registro de lo bloqueado
+    # ------------------------------------------------------------------ #
+
+    def reglas(self) -> list[filtro.Regla]:
+        """Las reglas propias del filtro, de la más nueva a la más antigua."""
+        with _conexion() as con:
+            filas = con.ejecutar("SELECT * FROM reglas_filtro ORDER BY id DESC").fetchall()
+        return [_fila_a_regla(f) for f in filas]
+
+    def _cargar_reglas(self) -> None:
+        self.__filtro.configurar(self.reglas())
+        self.__gestor._invalidar_cache()  # lo que se muestra se vuelve a filtrar con las reglas nuevas
+
+    def agregar_regla(
+        self, palabra: str, cerca_de: str = "", excepto: str = "", ahora: datetime | None = None
+    ) -> filtro.Regla:
+        """
+        Agrega una palabra o frase al filtro. Vale al instante para todos.
+        cerca_de: palabras de contexto separadas por coma (vacío = se filtra siempre).
+        excepto: frases separadas por coma donde nunca se filtra.
+        """
+        palabra = limpiar(palabra)
+        _validar_largo(palabra, "Palabra o frase", 2, self.LARGO_MAX_REGLA)
+        if not any(c.isalnum() for c in palabra):
+            raise ErrorValidacion("Palabra o frase: escribe letras.")
+        cerca, fuera = _separar(cerca_de), _separar(excepto)
+        with _conexion() as con:
+            nuevo_id = con.insertar(
+                "INSERT INTO reglas_filtro (palabra, cerca_de, excepto, creada_en) VALUES (?, ?, ?, ?)",
+                (palabra, ", ".join(cerca), ", ".join(fuera), _a_ts(_ahora(ahora))),
+            )
+        self._cargar_reglas()
+        return filtro.Regla(int(nuevo_id), palabra, cerca, fuera)
+
+    def borrar_regla(self, regla_id: int) -> None:
+        with _conexion() as con:
+            con.ejecutar("DELETE FROM reglas_filtro WHERE id = ?", (regla_id,))
+        self._cargar_reglas()
+
+    def registrar_filtrado(
+        self,
+        campo: str,
+        texto: str,
+        palabras: list[str],
+        persona_id: str | None = None,
+        ahora: datetime | None = None,
+    ) -> None:
+        """Anota un intento bloqueado por el filtro. Si falla, no interrumpe a la persona."""
+        ts = _a_ts(_ahora(ahora))
+        try:
+            with _conexion() as con:
+                con.ejecutar(
+                    "INSERT INTO filtrados (momento, campo, texto, palabras, persona_id) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (ts, campo, (texto or "")[:LARGO_MAX_DESCRIPCION], ", ".join(palabras), persona_id),
+                )
+                con.ejecutar(
+                    "DELETE FROM filtrados WHERE momento < ?",
+                    (ts - self.DIAS_REGISTRO_FILTRADOS * 86400,),
+                )
+        except Exception as error:  # el registro es secundario
+            print(f"[filtro] no se pudo registrar el bloqueo: {error}", flush=True)
+
+    def filtrados_recientes(self, limite: int = 100) -> list[Filtrado]:
+        with _conexion() as con:
+            filas = con.ejecutar(
+                "SELECT * FROM filtrados ORDER BY momento DESC, id DESC LIMIT ?", (limite,)
+            ).fetchall()
+        return [
+            Filtrado(
+                id=int(f["id"]),
+                momento=_de_ts(f["momento"]),
+                campo=f["campo"],
+                texto=f["texto"],
+                palabras=_separar(f["palabras"]),
+            )
+            for f in filas
+        ]
+
+    def borrar_filtrados(self) -> None:
+        with _conexion() as con:
+            con.ejecutar("DELETE FROM filtrados")
+
+
+# --------------------------------------------------------------------------- #
+# Una instancia de cada clase para toda la página. Sus métodos quedan también
+# como funciones del módulo (datos.crear_aviso(...)), que es como los usa la
+# interfaz.
+# --------------------------------------------------------------------------- #
+
+gestor = GestorAvisos(filtro.filtro_palabras)
+administracion = Administracion(gestor, filtro.filtro_palabras, os.environ.get("CLAVE_ADMIN", ""))
+
+crear_aviso = gestor.crear_aviso
+obtener_aviso = gestor.obtener_aviso
+avisos_activos = gestor.avisos_activos
+mi_buzon = gestor.mi_buzon
+unirse = gestor.unirse
+salirse = gestor.salirse
+eliminar_aviso = gestor.eliminar_aviso
+comentarios_de = gestor.comentarios_de
+comentar = gestor.comentar
+borrar_comentario = gestor.borrar_comentario
+denunciar = gestor.denunciar
+_invalidar_cache = gestor._invalidar_cache
+
+DIAS_REGISTRO_FILTRADOS = Administracion.DIAS_REGISTRO_FILTRADOS
+LARGO_MAX_REGLA = Administracion.LARGO_MAX_REGLA
+reglas = administracion.reglas
+_cargar_reglas = administracion._cargar_reglas
+agregar_regla = administracion.agregar_regla
+borrar_regla = administracion.borrar_regla
+registrar_filtrado = administracion.registrar_filtrado
+filtrados_recientes = administracion.filtrados_recientes
+borrar_filtrados = administracion.borrar_filtrados
+es_admin = administracion.es_admin
+agregar_admin = administracion.agregar_admin
+quitar_admin = administracion.quitar_admin
+quitar_todos_los_admin = administracion.quitar_todos_los_admin
+todos_los_avisos = administracion.todos_los_avisos
+estadisticas = administracion.estadisticas
+denuncias_pendientes = administracion.denuncias_pendientes
+descartar_denuncias = administracion.descartar_denuncias
+
+
+def inicializar() -> None:
+    """Crea o actualiza las tablas y carga las reglas del filtro. Se puede llamar las veces que sea."""
+    with _conexion() as con:
+        con.crear_tablas()
+    administracion._cargar_reglas()
