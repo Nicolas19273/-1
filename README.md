@@ -148,9 +148,14 @@ ningún botón de la página y pide una clave que solo tú conoces.
 2. Key: `CLAVE_ADMIN` · Value: una clave larga que no uses en otro lado
    (por ejemplo, 4 o 5 palabras al azar: `tetera-volcan-azul-mesa-73`).
 3. Toca **Save Changes**. Render reinicia la página solo (1 a 3 minutos).
-4. Entra a la página con tu correo institucional, abre `/admin`, escribe la
-   clave y toca **Entrar**. Tu cuenta queda como administradora hasta que
-   toques **Cerrar sesión de administración**.
+4. Abre `/admin`, escribe la clave y toca **Entrar**. No hace falta haber
+   ingresado antes con tu correo: si ya ingresaste, tu cuenta queda como
+   administradora; si no, ese navegador. Queda así hasta que toques
+   **Cerrar sesión de administración**.
+
+Como `/admin` no exige ingresar con el correo, la administración puede
+entrar aunque su propio correo esté en uso en otro navegador, y liberarlo
+desde el panel (Resumen → **Liberar un correo**).
 
 La clave nunca se guarda en el código ni en GitHub. Si alguien se equivoca
 de clave 5 veces, esa conexión queda bloqueada 15 minutos. Si cambias la

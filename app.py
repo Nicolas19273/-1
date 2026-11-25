@@ -984,6 +984,13 @@ def encabezado(
                 ui.label("Join In").classes("fu-display text-2xl font-extrabold leading-none")
                 ui.label("Avisos para completar el grupo").classes("fu-gris text-sm max-sm:hidden")
         with ui.row().classes("items-center gap-2 no-wrap shrink-0"):
+            if persona_id is None:
+                # Sin sesión de estudiante (por ejemplo, la administración entrando
+                # desde otro navegador): solo el botón para ingresar.
+                ui.button("Ingresar", icon="login", on_click=lambda: ui.navigate.to("/ingresar")).props(
+                    "unelevated no-caps"
+                ).classes("fu-blanco shrink-0")
+                return lambda: None
             with ui.button("Buzón", icon="inbox", on_click=lambda: ui.navigate.to("/buzon")).props(
                 "unelevated no-caps"
             ).classes("fu-blanco shrink-0"):
@@ -1259,8 +1266,10 @@ class Interfaz:
     def _a_ingresar(destino: str) -> RedirectResponse:
         return RedirectResponse(f"/ingresar?siguiente={quote(destino, safe='/')}", status_code=303)
 
-    def _portada(self, persona_id: str, dispositivo: str | None):
-        """Franja de arriba con el nombre del estudiante y «Cerrar sesión»."""
+    def _portada(self, persona_id: str | None, dispositivo: str | None):
+        """Franja de arriba con el nombre del estudiante y «Cerrar sesión» (o «Ingresar» si no hay nadie)."""
+        if persona_id is None:
+            return portada(None)
 
         def salir() -> None:
             self.acceso.cerrar_sesion(dispositivo)
@@ -2497,15 +2506,29 @@ class Interfaz:
     #
     # Se activa creando en Render la variable de entorno CLAVE_ADMIN (ver
     # README). Quien escribe la clave correcta queda como administrador en su
-    # cuenta hasta que cierre la sesión. La dirección /admin no aparece en
-    # ningún botón.
+    # cuenta, o, si no ha ingresado con su correo, en ese navegador, hasta que
+    # cierre la sesión. Así la administración puede entrar aunque su propio
+    # correo esté en uso en otro navegador (y liberarlo desde el panel). La
+    # dirección /admin no aparece en ningún botón.
     # ------------------------------------------------------------------ #
+
+    def _quien_administra(self, persona_id: str | None, dispositivo: str | None) -> str | None:
+        """
+        Con qué nombre se guarda la sesión de administración: la cuenta del
+        estudiante si ingresó con su correo; si no, el propio navegador.
+        """
+        navegador = f"navegador:{dispositivo}" if dispositivo else None
+        if persona_id and navegador and self.administracion.es_admin(navegador):
+            # Entró al panel sin cuenta y después ingresó con su correo: la
+            # sesión de administración pasa a su cuenta (una sola que cerrar).
+            self.administracion.agregar_admin(persona_id)
+            self.administracion.quitar_admin(navegador)
+        return persona_id or navegador
 
     def pagina_admin(self, request: Request):
         dispositivo = dispositivo_de(request)
         persona_id = self.acceso.persona_de(dispositivo)
-        if persona_id is None:
-            return self._a_ingresar("/admin")
+        admin_id = self._quien_administra(persona_id, dispositivo)
         preparar_pagina()
         cliente = getattr(request, "client", None)
         ip = getattr(cliente, "host", None) or "desconocida"
@@ -2527,11 +2550,11 @@ class Interfaz:
                     ).classes("fu-gris")
                 return
 
-            if not self.administracion.es_admin(persona_id):
-                self._ingreso_admin(persona_id, ip)
+            if not self.administracion.es_admin(admin_id):
+                self._ingreso_admin(admin_id, ip)
                 return
 
-            self._panel(persona_id, capa)
+            self._panel(admin_id, capa)
 
     def _ingreso_admin(self, persona_id: str | None, ip: str) -> None:
         with tarjeta_simple():
