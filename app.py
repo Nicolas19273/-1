@@ -2888,21 +2888,113 @@ class Interfaz:
 
             # ------------------------------------------------------------ Avisos
             with ui.tab_panel(p_avisos).classes("px-0 gap-4"):
-                ui.label("Los últimos 60 avisos, abiertos o no. Puedes eliminar cualquiera.").classes(
-                    "text-sm fu-gris"
-                )
+                ui.label(
+                    "Todos los avisos publicados, del más nuevo al más antiguo: abiertos, eliminados y "
+                    "terminados. «Eliminar» saca un aviso abierto del tablero y avisa a quienes se unieron; "
+                    "«Borrar para siempre» lo quita de la base de datos, sin dejar rastro."
+                ).classes("text-sm fu-gris")
 
                 def tras_eliminar() -> None:
                     lista_avisos.refresh()
                     lista_denuncias.refresh()
                     cifras.refresh()
 
+                def borrar_uno(aviso_id: int, dialogo: ui.dialog) -> None:
+                    dialogo.close()
+                    if not sigo_siendo_admin():
+                        return
+                    try:
+                        aviso = self.gestor.borrar_aviso(aviso_id, persona_id)
+                    except datos.ErrorValidacion as error:
+                        ui.notify(str(error), type="negative", position="top")
+                    else:
+                        ui.notify(f"Borraste «{aviso.titulo}» para siempre.", type="info", position="top")
+                    tras_eliminar()
+
+                def preguntar_borrar_uno(aviso: datos.Aviso) -> None:
+                    if not sigo_siendo_admin():
+                        return
+                    with capa, ui.dialog() as dialogo, ui.card().classes("fu-card").style("width: 420px"):
+                        ui.icon("delete_forever", size="40px").classes("text-red-700 self-center")
+                        ui.label("¿Borrar este aviso para siempre?").classes(
+                            "fu-display text-2xl font-extrabold text-center w-full"
+                        )
+                        ui.label(aviso.titulo).classes("fu-gris font-semibold text-center w-full -mt-3")
+                        ui.label(
+                            "Se borra de la base de datos junto con sus inscritos, comentarios y denuncias. "
+                            "Nadie lo verá más, ni siquiera en su buzón. No se puede deshacer."
+                        ).classes("text-sm text-stone-600 text-center w-full")
+                        with ui.row().classes("w-full gap-2 no-wrap"):
+                            ui.button("No, mantenerlo", on_click=dialogo.close).props("flat no-caps").classes(
+                                "fu-suave flex-1"
+                            )
+                            ui.button("Sí, borrar", on_click=partial(borrar_uno, aviso.id, dialogo)).props(
+                                "unelevated no-caps"
+                            ).classes("fu-peligro flex-1")
+                    dialogo.on("hide", dialogo.delete)
+                    dialogo.open()
+
+                def preguntar_borrar_todos() -> None:
+                    if not sigo_siendo_admin():
+                        return
+                    total = len(self.administracion.todos_los_avisos(None))
+                    if total == 0:
+                        ui.notify("No hay avisos que borrar.", type="info", position="top")
+                        return
+
+                    def borrar_todos() -> None:
+                        if (confirmacion.value or "").strip().upper() != "BORRAR":
+                            ui.notify("Escribe BORRAR para confirmar.", type="warning", position="top")
+                            return
+                        dialogo.close()
+                        if not sigo_siendo_admin():
+                            return
+                        try:
+                            n = self.gestor.borrar_todos_los_avisos(persona_id)
+                        except datos.ErrorValidacion as error:
+                            ui.notify(str(error), type="negative", position="top")
+                        else:
+                            ui.notify(
+                                f"Se borraron {n} aviso{'s' if n != 1 else ''}. El tablero quedó vacío.",
+                                type="info", position="top",
+                            )
+                        tras_eliminar()
+
+                    with capa, ui.dialog() as dialogo, ui.card().classes("fu-card").style("width: 440px"):
+                        ui.icon("delete_forever", size="40px").classes("text-red-700 self-center")
+                        ui.label("¿Borrar todos los avisos?").classes(
+                            "fu-display text-2xl font-extrabold text-center w-full"
+                        )
+                        ui.label(
+                            f"Se borrarán los {total} avisos (abiertos, eliminados y terminados) con sus "
+                            "inscritos, comentarios y denuncias. Los estudiantes y sus correos no se tocan. "
+                            "No se puede deshacer."
+                        ).classes("text-sm text-stone-600 text-center w-full")
+                        confirmacion = ui.input("Escribe BORRAR para confirmar").props("outlined").classes("w-full")
+                        confirmacion.on("keydown.enter", borrar_todos)
+                        with ui.row().classes("w-full gap-2 no-wrap"):
+                            ui.button("No, cancelar", on_click=dialogo.close).props("flat no-caps").classes(
+                                "fu-suave flex-1"
+                            )
+                            ui.button("Borrar todo", on_click=borrar_todos).props("unelevated no-caps").classes(
+                                "fu-peligro flex-1"
+                            )
+                    dialogo.on("hide", dialogo.delete)
+                    dialogo.open()
+
                 @ui.refreshable
                 def lista_avisos() -> None:
                     momento = ahora()
-                    avisos = self.administracion.todos_los_avisos(60)
-                    if not avisos:
-                        ui.label("Todavía no hay avisos.").classes("fu-gris")
+                    avisos = self.administracion.todos_los_avisos(None)
+                    with ui.row().classes("w-full items-center justify-between gap-2"):
+                        ui.label(
+                            "Todavía no hay avisos." if not avisos
+                            else f"{len(avisos)} aviso{'s' if len(avisos) != 1 else ''} en total"
+                        ).classes("font-bold")
+                        if avisos:
+                            ui.button("Borrar todos los avisos", icon="delete_forever", on_click=preguntar_borrar_todos).props(
+                                "flat rounded no-caps color=red-8"
+                            )
                     for aviso in avisos:
                         with tarjeta_simple():
                             with ui.row().classes("w-full items-center justify-between no-wrap gap-2"):
@@ -2919,18 +3011,24 @@ class Interfaz:
                                 f"{texto_fecha_evento(aviso.inicio_evento, momento)} · "
                                 f"{aviso.ocupados} de {aviso.personas_necesarias}"
                             ).classes("text-sm fu-gris")
-                            if not aviso.cancelado:
+                            with ui.row().classes("gap-1 -ml-1"):
+                                if not aviso.cancelado:
+                                    ui.button(
+                                        "Eliminar",
+                                        icon="delete_outline",
+                                        on_click=partial(self.abrir_dialogo_eliminar,
+                                            aviso.id,
+                                            capa,
+                                            persona_id,
+                                            tras_eliminar,
+                                            como_admin=True,
+                                        ),
+                                    ).props("flat rounded no-caps dense color=red-8")
                                 ui.button(
-                                    "Eliminar",
-                                    icon="delete_outline",
-                                    on_click=partial(self.abrir_dialogo_eliminar,
-                                        aviso.id,
-                                        capa,
-                                        persona_id,
-                                        tras_eliminar,
-                                        como_admin=True,
-                                    ),
-                                ).props("flat rounded no-caps dense color=red-8").classes("self-start -ml-1")
+                                    "Borrar para siempre",
+                                    icon="delete_forever",
+                                    on_click=partial(preguntar_borrar_uno, aviso),
+                                ).props("flat rounded no-caps dense color=red-8")
 
                 lista_avisos()
 

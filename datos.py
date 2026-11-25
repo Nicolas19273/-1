@@ -1109,6 +1109,46 @@ class GestorAvisos:
         assert actualizado is not None
         return actualizado
 
+    # Tablas que cuelgan de un aviso (se borran con él)
+    _TABLAS_DEL_AVISO = ("participantes", "comentarios", "denuncias")
+
+    def borrar_aviso(self, aviso_id: int, persona_id: str | None) -> Aviso:
+        """
+        Solo la administración: borra el aviso para siempre, esté abierto,
+        eliminado o terminado, junto con sus inscritos, comentarios y
+        denuncias. A diferencia de eliminar_aviso, no queda rastro: tampoco
+        aparece como «Cancelado» en el buzón de quienes se habían unido.
+        Devuelve el aviso tal como estaba.
+        """
+        if not es_admin(persona_id):
+            raise ErrorValidacion("No tienes permiso de administración.")
+        with _conexion() as con, con.transaccion():
+            fila = con.bloquear_aviso(aviso_id)
+            if fila is None:
+                raise ErrorValidacion("Este aviso ya no existe.")
+            aviso = _fila_a_aviso(fila, [])
+            for tabla in self._TABLAS_DEL_AVISO:
+                con.ejecutar(f"DELETE FROM {tabla} WHERE aviso_id = ?", (aviso_id,))
+            con.ejecutar("DELETE FROM avisos WHERE id = ?", (aviso_id,))
+        self._invalidar_cache()
+        return aviso
+
+    def borrar_todos_los_avisos(self, persona_id: str | None) -> int:
+        """
+        Solo la administración: borra para siempre TODOS los avisos (abiertos,
+        eliminados y terminados) con sus inscritos, comentarios y denuncias.
+        Devuelve cuántos avisos borró.
+        """
+        if not es_admin(persona_id):
+            raise ErrorValidacion("No tienes permiso de administración.")
+        with _conexion() as con, con.transaccion():
+            n = int(con.ejecutar("SELECT COUNT(*) AS n FROM avisos").fetchone()["n"])
+            for tabla in self._TABLAS_DEL_AVISO:
+                con.ejecutar(f"DELETE FROM {tabla}")
+            con.ejecutar("DELETE FROM avisos")
+        self._invalidar_cache()
+        return n
+
     # ------------------------------------------------------------------ #
     # Comentarios y denuncias
     # ------------------------------------------------------------------ #
@@ -1355,9 +1395,14 @@ class Administracion:
     # Moderación
     # ------------------------------------------------------------------ #
 
-    def todos_los_avisos(self, limite: int = 60) -> list[Aviso]:
-        """Los últimos avisos publicados, abiertos o no (para moderar)."""
+    def todos_los_avisos(self, limite: int | None = 60) -> list[Aviso]:
+        """
+        Los avisos publicados, del más nuevo al más antiguo, abiertos o no
+        (para moderar). Con limite=None, todos.
+        """
         with _conexion() as con:
+            if limite is None:
+                return _leer_avisos(con, "SELECT * FROM avisos ORDER BY id DESC", ())
             return _leer_avisos(con, "SELECT * FROM avisos ORDER BY id DESC LIMIT ?", (limite,))
 
     def estadisticas(self, ahora: datetime | None = None) -> dict[str, int]:
@@ -1514,6 +1559,8 @@ mi_buzon = gestor.mi_buzon
 unirse = gestor.unirse
 salirse = gestor.salirse
 eliminar_aviso = gestor.eliminar_aviso
+borrar_aviso = gestor.borrar_aviso
+borrar_todos_los_avisos = gestor.borrar_todos_los_avisos
 comentarios_de = gestor.comentarios_de
 comentar = gestor.comentar
 borrar_comentario = gestor.borrar_comentario

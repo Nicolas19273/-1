@@ -178,9 +178,14 @@ Qué hay en el panel:
   **probador** para ver si un texto se bloquearía, y la lista base completa.
 - **Bloqueados:** lo que el filtro no dejó publicar (fecha, campo, texto y
   palabra detectada). Se guarda 30 días.
-- **Avisos:** los últimos 60 avisos, abiertos o no, con la opción de
-  eliminar cualquiera. Quienes se habían unido lo ven en su buzón como
-  "Cancelado por la administración".
+- **Avisos:** todos los avisos, del más nuevo al más antiguo (abiertos,
+  eliminados y terminados), con dos opciones:
+  - **Eliminar** (solo los abiertos): sale del tablero y quienes se habían
+    unido lo ven en su buzón como "Cancelado por la administración".
+  - **Borrar para siempre** (cualquiera): se quita de la base de datos con
+    sus inscritos, comentarios y denuncias, sin dejar rastro.
+  - **Borrar todos los avisos** deja el tablero vacío; pide escribir
+    BORRAR para confirmar. Los estudiantes y sus correos no se tocan.
 - **Correos:** la lista de correos en uso, con el nombre y el último uso, y
   un buscador. La **X** junto a cada correo lo libera (pregunta antes): se
   cierra su sesión y esa persona puede volver a entrar desde otro navegador
