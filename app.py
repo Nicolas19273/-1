@@ -2637,8 +2637,14 @@ class Interfaz:
                     ui.notify(f"Se cerraron {n} sesiones de administración.", type="info", position="top")
                     ui.navigate.to("/admin")
 
+                def actualizar_todo() -> None:
+                    # Todas las pestañas del panel, no solo los números del Resumen
+                    for seccion in (cifras, lista_denuncias, lista_reglas, lista_bloqueados, lista_avisos, lista_correos):
+                        seccion.refresh()
+                    ui.notify("Panel actualizado.", type="info", position="top")
+
                 with ui.row().classes("w-full justify-between"):
-                    ui.button("Actualizar", icon="refresh", on_click=cifras.refresh).props(
+                    ui.button("Actualizar", icon="refresh", on_click=actualizar_todo).props(
                         "flat rounded no-caps color=grey-9"
                     )
                     ui.button("Cerrar sesión de administración", icon="logout", on_click=cerrar_sesion).props(
@@ -2930,11 +2936,15 @@ class Interfaz:
 
             # ------------------------------------------------------------ Correos
             with ui.tab_panel(p_correos).classes("px-0 gap-4"):
-                ui.label(
-                    "Cada correo queda unido a un solo navegador. Aquí ves los que están en uso. "
-                    "Toca la X para liberar uno: se cierra su sesión y esa persona puede volver a "
-                    "entrar desde otro navegador con un código nuevo. Su cuenta y sus avisos no se borran."
-                ).classes("text-sm fu-gris")
+                with ui.row().classes("w-full justify-between items-start no-wrap gap-2"):
+                    ui.label(
+                        "Cada correo queda unido a un solo navegador. Aquí ves los que están en uso. "
+                        "Toca la X para liberar uno: se cierra su sesión y esa persona puede volver a "
+                        "entrar desde otro navegador con un código nuevo. Su cuenta y sus avisos no se borran."
+                    ).classes("text-sm fu-gris")
+                    ui.button(icon="refresh", on_click=lambda: lista_correos.refresh()).props(
+                        'flat round color=grey-9 aria-label="Actualizar la lista de correos"'
+                    ).classes("shrink-0").tooltip("Actualizar")
                 buscador_correos = ui.input(
                     "Buscar por nombre o correo", on_change=lambda _: lista_correos.refresh()
                 ).props("outlined dense clearable").classes("w-full")
