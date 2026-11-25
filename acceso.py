@@ -338,6 +338,28 @@ class Acceso:
                 self.__sesiones.pop(dispositivo, None)
         return len(dispositivos)
 
+    def correos_en_uso(self) -> list[dict]:
+        """
+        Para la administración: los correos con sesión abierta, del usado más
+        recientemente al más antiguo. Cada uno trae «correo», «nombre» y
+        «usado» (la última vez que se usó, como fecha y hora).
+        """
+        with datos._conexion() as con:
+            filas = con.ejecutar(
+                "SELECT e.correo AS correo, e.nombre AS nombre, MAX(s.usada_en) AS usada_en "
+                "FROM sesiones s JOIN estudiantes e ON e.persona_id = s.persona_id "
+                "WHERE s.creada_en >= ? GROUP BY e.correo, e.nombre ORDER BY MAX(s.usada_en) DESC",
+                (self._limite_sesiones_ms(),),
+            ).fetchall()
+        return [
+            {
+                "correo": f["correo"],
+                "nombre": f["nombre"],
+                "usado": datetime.fromtimestamp(int(f["usada_en"]) / 1000, datos.ZONA_HORARIA),
+            }
+            for f in filas
+        ]
+
     def quitar_sesiones_de_mas(self) -> int:
         """
         Al iniciar: si un correo quedó abierto en más navegadores de los

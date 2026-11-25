@@ -386,6 +386,7 @@ body { -webkit-font-smoothing: antialiased; }
 .fu-codigo input { font-family: "Archivo", sans-serif; font-weight: 900; font-size: 30px; letter-spacing: .35em; text-align: center; }
 .q-btn.fu-yo-btn { min-width: 46px; padding: 0 10px; font-weight: 900; }
 .fu-menu { border: 2.5px solid var(--tinta); border-radius: 14px; box-shadow: 0 5px 0 var(--tinta); }
+.fu-iniciales-correo { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--niebla); border: 2px solid var(--tinta); color: var(--tinta); font-weight: 900; font-size: 14px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>""".replace("ICONO_LLEGAR", _icono_css('<path d="M4 11l16-7-7 16-2-7z"/>')).replace(
         "ICONO_COMENTAR", _icono_css('<path d="M5 5h14v10H10l-5 4z"/>')
@@ -2595,6 +2596,7 @@ class Interfaz:
             p_palabras = ui.tab("Palabras", icon="spellcheck")
             p_bloqueados = ui.tab("Bloqueados", icon="block")
             p_avisos = ui.tab("Avisos", icon="campaign")
+            p_correos = ui.tab("Correos", icon="alternate_email")
 
         with ui.tab_panels(pestanas, value=p_resumen).classes("w-full bg-transparent"):
             # ------------------------------------------------------------ Resumen
@@ -2651,35 +2653,6 @@ class Interfaz:
                     "Úsalo si entraste desde un computador ajeno o si cambiaste la clave."
                 ).classes("text-xs text-stone-400 self-end -mt-3")
 
-                with tarjeta_simple():
-                    ui.label("Liberar un correo").classes("fu-display text-xl")
-                    ui.label(
-                        "Cada correo queda unido a un solo navegador. Si un estudiante cambió de celular, "
-                        "borró las cookies o entró en incógnito, aquí cierras su sesión para que pueda "
-                        "volver a entrar (con un código nuevo)."
-                    ).classes("text-sm fu-gris -mt-2")
-                    campo_liberar = ui.input(
-                        "Correo del estudiante", placeholder=f"nombre.apellido@{self.acceso.DOMINIO_PERMITIDO}"
-                    ).props("outlined type=email").classes("w-full")
-
-                    def liberar() -> None:
-                        if not sigo_siendo_admin():
-                            return
-                        try:
-                            n = self.acceso.liberar_correo(campo_liberar.value)
-                        except datos.ErrorValidacion as error:
-                            ui.notify(str(error), type="negative", position="top")
-                            return
-                        if n:
-                            ui.notify("Listo: ese correo ya puede entrar desde otro navegador.", type="positive", position="top")
-                        else:
-                            ui.notify("Ese correo no tenía ninguna sesión abierta.", type="info", position="top")
-                        campo_liberar.value = ""
-
-                    campo_liberar.on("keydown.enter", liberar)
-                    ui.button("Liberar correo", icon="lock_open", on_click=liberar).props(
-                        "unelevated rounded no-caps"
-                    ).classes("self-end")
 
             # ------------------------------------------------------------ Denuncias
             with ui.tab_panel(p_denuncias).classes("px-0 gap-4"):
@@ -2954,6 +2927,90 @@ class Interfaz:
                                 ).props("flat rounded no-caps dense color=red-8").classes("self-start -ml-1")
 
                 lista_avisos()
+
+            # ------------------------------------------------------------ Correos
+            with ui.tab_panel(p_correos).classes("px-0 gap-4"):
+                ui.label(
+                    "Cada correo queda unido a un solo navegador. Aquí ves los que están en uso. "
+                    "Toca la X para liberar uno: se cierra su sesión y esa persona puede volver a "
+                    "entrar desde otro navegador con un código nuevo. Su cuenta y sus avisos no se borran."
+                ).classes("text-sm fu-gris")
+                buscador_correos = ui.input(
+                    "Buscar por nombre o correo", on_change=lambda _: lista_correos.refresh()
+                ).props("outlined dense clearable").classes("w-full")
+
+                def liberar_correo(correo: str, dialogo: ui.dialog) -> None:
+                    dialogo.close()
+                    if not sigo_siendo_admin():
+                        return
+                    try:
+                        self.acceso.liberar_correo(correo)
+                    except datos.ErrorValidacion as error:
+                        ui.notify(str(error), type="negative", position="top")
+                    else:
+                        ui.notify(f"Listo: {correo} ya puede entrar desde otro navegador.", type="positive", position="top")
+                    lista_correos.refresh()
+
+                def preguntar_liberar(correo: str, nombre: str) -> None:
+                    if not sigo_siendo_admin():
+                        return
+                    with capa, ui.dialog() as dialogo, ui.card().classes("fu-card").style("width: 420px"):
+                        ui.icon("lock_open", size="40px").classes("text-primary self-center")
+                        ui.label("¿Liberar este correo?").classes(
+                            "fu-display text-2xl font-extrabold text-center w-full"
+                        )
+                        ui.label(f"{nombre} · {correo}").classes("fu-gris font-semibold text-center w-full -mt-3")
+                        ui.label(
+                            "Se cerrará su sesión en el navegador donde está abierto. Podrá volver a entrar "
+                            "con un código nuevo, y su cuenta y sus avisos se mantienen."
+                        ).classes("text-sm text-stone-600 text-center w-full")
+                        with ui.row().classes("w-full gap-2 no-wrap"):
+                            ui.button("No, dejarlo", on_click=dialogo.close).props("flat no-caps").classes(
+                                "fu-suave flex-1"
+                            )
+                            ui.button("Sí, liberar", on_click=partial(liberar_correo, correo, dialogo)).props(
+                                "unelevated no-caps"
+                            ).classes("fu-peligro flex-1")
+                    dialogo.on("hide", dialogo.delete)
+                    dialogo.open()
+
+                @ui.refreshable
+                def lista_correos() -> None:
+                    momento = ahora()
+                    en_uso = self.acceso.correos_en_uso()
+                    busqueda = (buscador_correos.value or "").strip().lower()
+                    visibles = [
+                        c for c in en_uso
+                        if not busqueda or busqueda in c["correo"].lower() or busqueda in c["nombre"].lower()
+                    ]
+                    total = len(en_uso)
+                    ui.label(
+                        "Ningún correo está en uso." if total == 0
+                        else f"{total} correo{'s' if total != 1 else ''} en uso"
+                    ).classes("font-bold")
+                    if total and not visibles:
+                        ui.label("Ningún correo coincide con la búsqueda.").classes("fu-gris")
+                    if not visibles:
+                        return
+                    with tarjeta_simple().classes("gap-0 p-0"):
+                        for i, c in enumerate(visibles):
+                            if i:
+                                ui.separator()
+                            with ui.row().classes("w-full items-center no-wrap gap-3 px-4 py-3"):
+                                ui.label(iniciales(c["nombre"])).classes("fu-iniciales-correo shrink-0")
+                                with ui.column().classes("gap-0 min-w-0 flex-1"):
+                                    ui.label(c["nombre"]).classes("font-bold leading-tight")
+                                    ui.label(c["correo"]).classes("text-sm fu-gris break-all leading-tight")
+                                    ui.label(f"Último uso: {texto_hace(c['usado'], momento)}").classes(
+                                        "text-xs text-stone-400"
+                                    )
+                                ui.button(
+                                    icon="close", on_click=partial(preguntar_liberar, c["correo"], c["nombre"])
+                                ).props(
+                                    f'flat round dense color=red-8 aria-label="Liberar {c["correo"]}"'
+                                ).classes("shrink-0").tooltip("Liberar este correo")
+
+                lista_correos()
 
 
 # --------------------------------------------------------------------------- #

@@ -155,7 +155,7 @@ ningún botón de la página y pide una clave que solo tú conoces.
 
 Como `/admin` no exige ingresar con el correo, la administración puede
 entrar aunque su propio correo esté en uso en otro navegador, y liberarlo
-desde el panel (Resumen → **Liberar un correo**).
+desde el panel (pestaña **Correos**, con la X junto a cada correo).
 
 La clave nunca se guarda en el código ni en GitHub. Si alguien se equivoca
 de clave 5 veces, esa conexión queda bloqueada 15 minutos. Si cambias la
@@ -165,8 +165,6 @@ Qué hay en el panel:
 
 - **Resumen:** avisos abiertos, publicados, personas unidas, bloqueos,
   avisos eliminados, denuncias por revisar y estudiantes registrados.
-  También **Liberar un correo**: cierra la sesión de un estudiante que perdió
-  su navegador, para que vuelva a entrar con un código nuevo.
 - **Denuncias:** los avisos que la gente denunció, con los motivos y
   comentarios. Puedes **eliminar el aviso** o **descartar las denuncias**.
   Con 3 denuncias de personas distintas, el aviso se oculta del tablero
@@ -183,6 +181,10 @@ Qué hay en el panel:
 - **Avisos:** los últimos 60 avisos, abiertos o no, con la opción de
   eliminar cualquiera. Quienes se habían unido lo ven en su buzón como
   "Cancelado por la administración".
+- **Correos:** la lista de correos en uso, con el nombre y el último uso, y
+  un buscador. La **X** junto a cada correo lo libera (pregunta antes): se
+  cierra su sesión y esa persona puede volver a entrar desde otro navegador
+  con un código nuevo. Su cuenta y sus avisos no se borran.
 
 ### Paso 7 — Mapa con estilo moderno (recomendado)
 
@@ -221,7 +223,8 @@ nueva solo, en un par de minutos. Los avisos no se pierden.
      (arriba a la derecha) → **Cerrar sesión**, y se entra desde el nuevo.
    - **Si se perdió el navegador** (celular nuevo, cookies borradas o una
      ventana de incógnito que se cerró), la administración **libera el
-     correo** desde `/admin` → Resumen → **Liberar un correo**. Por eso la
+     correo** desde `/admin` → **Correos**: ahí ve los correos en uso y
+     toca la **X** del que quiere liberar. Por eso la
      página pide no ingresar en incógnito.
    - Si alguien comparte el enlace de un aviso, quien lo abre ingresa y
      vuelve directo a ese aviso.
