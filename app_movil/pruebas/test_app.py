@@ -293,11 +293,58 @@ class CompartidorFalso:
         self.textos.append((texto, subject))
 
 
+class EnlacesFalsos:
+    """Como ft.UrlLauncher: guarda los enlaces que la app quiso abrir."""
+
+    def __init__(self):
+        self.abiertos: list[str] = []
+
+    async def launch_url(self, url, **k):
+        self.abiertos.append(url)
+
+
+class ActualizadorFalso:
+    """Como ActualizadorAndroid, sin Android: permiso, descarga por partes e instalador."""
+
+    def __init__(self, permiso=True, falla=False):
+        self.permiso = permiso
+        self.falla = falla
+        self.pedidos_de_permiso = 0
+        self.descargas: list[tuple[str, str]] = []
+        self.instalados: list[int] = []
+        self.cancelados: list[int] = []
+        self.pasos = 0
+
+    def puede_instalar(self):
+        return self.permiso
+
+    def pedir_permiso(self):
+        self.pedidos_de_permiso += 1
+
+    def descargar(self, url, version):
+        self.descargas.append((url, version))
+        return 42
+
+    def estado(self, descarga):
+        from joinin.actualizar import BAJANDO, FALLO, LISTO
+
+        self.pasos += 1
+        if self.falla:
+            return FALLO, 0, 0
+        return (BAJANDO, self.pasos * 20_000_000, 56_000_000) if self.pasos < 3 else (LISTO, 56_000_000, 56_000_000)
+
+    def instalar(self, descarga):
+        self.instalados.append(descarga)
+
+    def cancelar(self, descarga):
+        self.cancelados.append(descarga)
+
+
 async def celular(token_inicial: str | None = None):
     pagina, almacen = PaginaFalsa(), AlmacenFalso()
     if token_inicial:
         almacen.datos[Almacen.CLAVE_TOKEN] = token_inicial
-    app = AppJoinIn(pagina, almacen, url=BASE, compartidor=CompartidorFalso())
+    app = AppJoinIn(pagina, almacen, url=BASE, compartidor=CompartidorFalso(), enlaces=EnlacesFalsos())
     await app.iniciar()
     revisar_controles(pagina)
     return app, pagina
@@ -677,23 +724,70 @@ async def prueba():
     from joinin.cliente import URL_DESCARGA, es_mas_nueva
 
     assert es_mas_nueva("1.0.10", "1.0.9") and not es_mas_nueva("1.0.9", "1.0.9") and not es_mas_nueva("", "1.0.9")
-    assert nombre_pantalla(ana) == "PantallaTablero" and not hay(pa, "Hay una versión nueva")
+    assert nombre_pantalla(ana) == "PantallaTablero" and not hay(pa, "Actualización disponible")
     await nucleo.AppJoinIn.revisar_version(ana, lambda: "1.0.99")  # versión «dev»: no pregunta
     assert ana.version_nueva is None
     nucleo.VERSION = "1.0.5"
     try:
         await ana.revisar_version(lambda: "1.0.5")
-        assert ana.version_nueva is None and not hay(pa, "Hay una versión nueva")
+        assert ana.version_nueva is None and not hay(pa, "Actualización disponible")
         await ana.revisar_version(lambda: (_ for _ in ()).throw(OSError("sin internet")))
         assert ana.version_nueva is None
         await ana.revisar_version(lambda: "1.0.6")
-        assert ana.version_nueva == "1.0.6" and hay(pa, "Hay una versión nueva de Join In (1.0.6)")
-        assert any(getattr(x, "url", None) == URL_DESCARGA for x in recorrer(pa.views[-1]))
+        assert ana.version_nueva == "1.0.6" and hay(pa, "Actualización disponible")
         await deslizar_para_actualizar(pa)  # sigue ahí después de actualizar
-        assert hay(pa, "Hay una versión nueva de Join In (1.0.6)")
+        assert hay(pa, "Actualización disponible") and hay(pa, "Join In 1.0.6 ya está lista")
+
+        # Fuera de Android (sin actualizador): «Actualizar» abre el enlace de descarga
+        await tocar(pa, "Actualizar")
+        assert ana.enlaces.abiertos == [URL_DESCARGA]
+
+        # En Android sin permiso para instalar: lo explica y abre el ajuste
+        ana.actualizador = ActualizadorFalso(permiso=False)
+        await tocar(pa, "Actualizar")
+        assert hay(pa, "Un permiso, solo la primera vez")
+        await tocar(pa, "Dar permiso")
+        assert ana.actualizador.pedidos_de_permiso == 1 and not pa.abiertos and not ana.actualizador.descargas
+
+        # Con permiso: baja con avance y abre el instalador de Android
+        nucleo.SEGUNDOS_ENTRE_REVISIONES = 0
+        vistos: list[str] = []
+        original = pa.update
+
+        def mirar(*a):
+            if pa.abiertos:
+                vistos.extend(t for t in textos(pa.abiertos[-1]) if "%" in t)
+            return original(*a)
+
+        pa.update = mirar
+        ana.actualizador = ActualizadorFalso()
+        await tocar(pa, "Actualizar")
+        pa.update = original
+        assert ana.actualizador.descargas == [(URL_DESCARGA, "1.0.6")] and ana.actualizador.instalados == [42], (ana.actualizador.descargas, ana.actualizador.instalados, ultimo_aviso(pa))
+        assert "35 % · 20 de 56 MB" in vistos and not pa.abiertos
+
+        # Si la descarga falla: lo dice, sin abrir el instalador
+        ana.actualizador = ActualizadorFalso(falla=True)
+        await tocar(pa, "Actualizar")
+        assert "No se pudo bajar la actualización" in ultimo_aviso(pa) and not ana.actualizador.instalados
+        assert not pa.abiertos
+
+        # «Buscar actualizaciones» en el menú de la cuenta
+        ana.actualizador = ActualizadorFalso()
+        await ana.revisar_version(lambda: "1.0.5", manual=True)
+        assert ultimo_aviso(pa) == "Ya tienes la última versión (1.0.5)."
+        await ana.revisar_version(lambda: (_ for _ in ()).throw(OSError("sin internet")), manual=True)
+        assert "No pudimos revisar" in ultimo_aviso(pa)
+        await ana.revisar_version(lambda: "1.0.7", manual=True)  # hay una nueva: la baja e instala
+        assert ana.actualizador.descargas == [(URL_DESCARGA, "1.0.7")] and ana.actualizador.instalados == [42]
+        assert hay_exacto(pa, "Buscar actualizaciones")
     finally:
         nucleo.VERSION = "dev"
-    print("OK: compartir avisos, deslizar para actualizar y aviso de versión nueva")
+        nucleo.SEGUNDOS_ENTRE_REVISIONES = 0.5
+        ana.actualizador = None
+    await ana.revisar_version(manual=True)
+    assert ultimo_aviso(pa) == "Esta es una versión de prueba: no se actualiza."
+    print("OK: compartir, deslizar para actualizar y «Actualización disponible» (permiso, avance, instalador)")
 
     # 12) Textos de fechas y estados (los mismos que tenía la página)
     ref = datetime(2026, 11, 26, 10, 0, tzinfo=formato.ZONA_HORARIA)

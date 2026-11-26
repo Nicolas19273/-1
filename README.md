@@ -241,8 +241,11 @@ Los avisos no se pierden.
    de lado). Cada tarjeta muestra la categoría, el valor, cuándo, dónde,
    cuántos faltan (con una barra de cupos) y cuánto le queda abierto. Se
    actualiza solo cada 20 segundos, o al deslizar la pantalla hacia abajo.
-   Si hay una versión nueva de la app, el tablero lo avisa con un botón para
-   descargarla (la versión instalada aparece en el menú de la cuenta).
+   Si hay una versión nueva, el tablero muestra **Actualización disponible**
+   → **Actualizar**: la app la baja y Android la instala encima, sin perder
+   la sesión (también en el menú de la cuenta → **Buscar actualizaciones**).
+   Para esto, todas las versiones deben ir firmadas con la misma clave
+   (Paso 6).
 2. **Crear aviso** (botón amarillo): categoría, título, cuántos son y cuántos
    necesitan en total (con vista previa de los cupos), lugar, fecha y hora,
    valor por persona y si el aviso dura **24 o 48 horas**.

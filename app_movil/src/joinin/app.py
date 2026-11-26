@@ -16,8 +16,9 @@ from typing import Any, Callable
 
 import flet as ft
 
-from .cliente import ClienteAPI, ErrorServidor, es_mas_nueva, ultima_version_publicada
-from .estilo import BLANCO, COLOR_PRINCIPAL, FONDO, ROJO, TINTA, tema
+from .actualizar import FALLO, LISTO, crear_actualizador
+from .cliente import URL_DESCARGA, ClienteAPI, ErrorServidor, es_mas_nueva, ultima_version_publicada
+from .estilo import BLANCO, COLOR_PRINCIPAL, FONDO, GRIS_SUAVE, ROJO, TINTA, tema
 from .version import VERSION
 
 SEGUNDOS_ENTRE_REFRESCOS = 20  # cada cuánto se actualiza solo lo que está en pantalla
@@ -107,6 +108,9 @@ class Pantalla:
         )
 
 
+SEGUNDOS_ENTRE_REVISIONES = 0.5  # cada cuánto se mira el avance de la descarga
+
+
 class ToquesSecretos:
     """
     La entrada escondida a la administración: tocar algo varias veces seguidas
@@ -132,11 +136,14 @@ class ToquesSecretos:
 
 
 class AppJoinIn:
-    def __init__(self, page: ft.Page, almacen: Any, url: str | None = None, compartidor: Any = None):
+    def __init__(self, page: ft.Page, almacen: Any, url: str | None = None, compartidor: Any = None,
+                 enlaces: Any = None, actualizador: Any = None):
         self.page = page
         self.almacen = almacen
         self.url = url
         self.compartidor = compartidor  # ft.Share(): abre el menú de compartir del celular
+        self.enlaces = enlaces  # ft.UrlLauncher(): abre un enlace en el navegador
+        self.actualizador = actualizador  # ActualizadorAndroid, o None fuera de Android
         self.version_nueva: str | None = None  # si en GitHub hay un APK más nuevo que este
         self.api: ClienteAPI | None = None
         self.config: dict = {}
@@ -238,13 +245,21 @@ class AppJoinIn:
 
     # ------------------------------------------------------------------ versión y compartir
 
-    async def revisar_version(self, buscar: Callable[[], str | None] = ultima_version_publicada) -> None:
-        """Si en GitHub hay un APK más nuevo, el tablero lo avisa (la app no está en Play Store)."""
+    async def revisar_version(self, buscar: Callable[[], str | None] = ultima_version_publicada,
+                              manual: bool = False) -> None:
+        """
+        Si en GitHub hay un APK más nuevo, el tablero muestra «Actualización disponible»
+        (la app no está en Play Store). Con manual=True (menú de la cuenta) avisa el resultado.
+        """
         if VERSION == "dev":
+            if manual:
+                self.avisar("Esta es una versión de prueba: no se actualiza.")
             return
         try:
             publicada = await asyncio.to_thread(buscar)
         except Exception:
+            if manual:
+                self.avisar("No pudimos revisar si hay una versión nueva. Revisa tu internet.", error=True)
             return
         if publicada and es_mas_nueva(publicada, VERSION):
             self.version_nueva = publicada
@@ -252,6 +267,111 @@ class AppJoinIn:
             if mostrar is not None:
                 mostrar()
                 self.page.update()
+            if manual:
+                await self.actualizar_app()
+        elif manual:
+            self.avisar(f"Ya tienes la última versión ({VERSION}).")
+
+    async def probar_actualizador(self) -> None:
+        """La prueba en el emulador: si adb dejó el archivo de prueba, recorre «Actualizar»."""
+        if self.actualizador is None:
+            return
+        try:
+            hay = await asyncio.to_thread(self.actualizador.hay_prueba)
+        except Exception as error:
+            print(f"[actualizar] {error!r}", flush=True)
+            return
+        if hay:
+            print("[actualizar] prueba del actualizador", flush=True)
+            self.version_nueva = self.version_nueva or "de prueba"
+            await self.actualizar_app()
+
+    async def abrir_enlace(self, url: str) -> None:
+        if self.enlaces is None:
+            return
+        try:
+            await self.enlaces.launch_url(url)
+        except Exception as error:
+            print(f"[enlace] {error!r}", flush=True)
+            self.avisar("No se pudo abrir el enlace.", error=True)
+
+    async def actualizar_app(self, e=None) -> None:
+        """
+        Baja la versión nueva y abre el instalador de Android, que la instala encima de esta.
+        Sin actualizador (fuera de Android) o si algo falla, abre el enlace de descarga.
+        """
+        nueva = self.version_nueva
+        if not nueva:
+            return
+        act = self.actualizador
+        if act is None:
+            await self.abrir_enlace(URL_DESCARGA)
+            return
+        try:
+            puede = await asyncio.to_thread(act.puede_instalar)
+        except Exception as error:
+            print(f"[actualizar] {error!r}", flush=True)
+            await self.abrir_enlace(URL_DESCARGA)
+            return
+        if not puede:
+            self.preguntar(
+                "Un permiso, solo la primera vez",
+                "Para actualizarse sola, Join In necesita permiso para instalar apps. Toca «Dar permiso», "
+                "activa «Permitir de esta fuente», vuelve atrás y toca «Actualizar» otra vez.",
+                "Dar permiso",
+                lambda: asyncio.to_thread(act.pedir_permiso),
+                no="Ahora no",
+            )
+            return
+
+        porcentaje = ft.Text("Empezando…", size=13, color=TINTA)
+        barra = ft.ProgressBar(value=None, color=COLOR_PRINCIPAL, bgcolor=GRIS_SUAVE)
+        estado = {"cancelado": False, "descarga": None}
+
+        def cancelar(e=None):
+            estado["cancelado"] = True
+            self.cerrar_dialogo(dialogo)
+
+        dialogo = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Actualizando a la versión {nueva}", weight=ft.FontWeight.W_800),
+            content=ft.Column(
+                [ft.Text("Bajando la versión nueva. Cuando termine, Android te preguntará si quieres "
+                         "actualizar: toca «Actualizar». No pierdes tu sesión ni tus avisos.", color=TINTA),
+                 barra, porcentaje],
+                tight=True,
+                spacing=12,
+            ),
+            actions=[ft.TextButton("Cancelar", on_click=cancelar)],
+        )
+        self.page.show_dialog(dialogo)
+        try:
+            descarga = await asyncio.to_thread(act.descargar, URL_DESCARGA, nueva)
+            estado["descarga"] = descarga
+            limite = time.monotonic() + 15 * 60  # con internet muy lento, hasta 15 minutos
+            while True:
+                if time.monotonic() > limite:
+                    raise RuntimeError("la descarga tardó demasiado")
+                if estado["cancelado"]:
+                    await asyncio.to_thread(act.cancelar, descarga)
+                    return
+                situacion, bajados, total = await asyncio.to_thread(act.estado, descarga)
+                if situacion == LISTO:
+                    break
+                if situacion == FALLO:
+                    raise RuntimeError("la descarga falló")
+                if total > 0:
+                    barra.value = bajados / total
+                    porcentaje.value = f"{bajados * 100 // total} % · {bajados / 1e6:.0f} de {total / 1e6:.0f} MB"
+                self.page.update()
+                await asyncio.sleep(SEGUNDOS_ENTRE_REVISIONES)
+            self.cerrar_dialogo(dialogo)
+            await asyncio.to_thread(act.instalar, descarga)
+        except Exception as error:
+            print(f"[actualizar] {error!r}", flush=True)
+            if not estado["cancelado"]:
+                self.cerrar_dialogo(dialogo)
+                self.avisar("No se pudo bajar la actualización. Revisa tu internet e inténtalo de nuevo.", error=True)
 
     async def compartir(self, texto: str, asunto: str | None = None) -> None:
         """Abre el menú de compartir del celular (WhatsApp, Instagram, correo…)."""
@@ -334,6 +454,8 @@ class AppJoinIn:
 
 
 async def iniciar_app(page: ft.Page) -> None:
-    app = AppJoinIn(page, Almacen(), compartidor=ft.Share())
+    app = AppJoinIn(page, Almacen(), compartidor=ft.Share(), enlaces=ft.UrlLauncher(),
+                    actualizador=crear_actualizador())
     await app.iniciar()
     page.run_task(app.refrescar_periodicamente)
+    page.run_task(app.probar_actualizador)

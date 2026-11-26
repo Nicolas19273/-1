@@ -31,3 +31,9 @@ path = "src"
 
 [tool.flet.android]
 split_per_abi = true  # un APK por tipo de procesador: cada uno pesa un tercio
+# pyjnius: para que la app baje su actualización y abra el instalador de Android (joinin/actualizar.py)
+dependencies = ["pyjnius"]
+
+[tool.flet.android.permission]
+# Permite abrir el instalador de Android para instalar la versión nueva encima de esta.
+"android.permission.REQUEST_INSTALL_PACKAGES" = true

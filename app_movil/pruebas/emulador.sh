@@ -69,3 +69,40 @@ if [ "$EXIGIR" = "ingreso" ] && [ "$pantalla" != "ingreso" ]; then
   exit 1
 fi
 echo "OK: la app arranca en Android y muestra «$pantalla»"
+
+# ---------------------------------------------------------------------------
+# Segunda parte: «Actualizar» de verdad. Con el archivo de prueba en su carpeta,
+# la app baja el APK publicado con el DownloadManager y abre el instalador de
+# Android. Basta con que aparezca el instalador (no se instala nada).
+# ---------------------------------------------------------------------------
+echo "Prueba del actualizador…"
+adb shell appops set "$PAQUETE" REQUEST_INSTALL_PACKAGES allow
+adb shell mkdir -p "/sdcard/Android/data/$PAQUETE/files"
+adb shell touch "/sdcard/Android/data/$PAQUETE/files/prueba-actualizar"
+adb shell am force-stop "$PAQUETE"
+adb logcat -c
+adb shell monkey -p "$PAQUETE" -c android.intent.category.LAUNCHER 1 >/dev/null
+
+instalador=""
+for i in $(seq 1 60); do  # hasta 5 minutos: baja unos 55 MB
+  sleep 5
+  if adb shell uiautomator dump /sdcard/ui2.xml >/dev/null 2>&1; then
+    adb shell cat /sdcard/ui2.xml > "$SALIDA/ui_actualizar.xml" 2>/dev/null
+    if grep -q "packageinstaller" "$SALIDA/ui_actualizar.xml"; then instalador="si"; break; fi
+    if grep -q "Un permiso, solo la primera vez" "$SALIDA/ui_actualizar.xml"; then break; fi
+    if grep -q "No se pudo bajar la actualización" "$SALIDA/ui_actualizar.xml"; then break; fi
+  fi
+done
+adb logcat -d > "$SALIDA/logcat_actualizar.txt"
+echo "Textos en pantalla:"
+grep -o -E '(text|content-desc)="[^"]+"' "$SALIDA/ui_actualizar.xml" 2>/dev/null | sed 's/^/  /' | head -20
+grep -h "\[actualizar\]" "$SALIDA/logcat_actualizar.txt" | tail -5
+if grep -n -E "Traceback" "$SALIDA/logcat_actualizar.txt"; then
+  echo "::error::La app tuvo un error de Python al actualizar (ver logcat_actualizar.txt)"
+  exit 1
+fi
+if [ -z "$instalador" ]; then
+  echo "::error::«Actualizar» no llegó al instalador de Android"
+  exit 1
+fi
+echo "OK: «Actualizar» baja el APK y abre el instalador de Android"

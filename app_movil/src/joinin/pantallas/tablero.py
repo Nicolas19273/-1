@@ -9,7 +9,6 @@ import flet as ft
 from .. import componentes as c
 from .. import formato as f
 from ..app import Pantalla, ToquesSecretos
-from ..cliente import URL_DESCARGA
 from ..version import VERSION
 from ..estilo import AMARILLO, BLANCO, COLOR_PRINCIPAL, GRIS_SUAVE, TINTA, colores_de, icono_de
 
@@ -70,6 +69,8 @@ class PantallaTablero(Pantalla):
                 self.item_admin,
                 ft.PopupMenuItem(),
                 ft.PopupMenuItem(icon=ft.Icons.LOGOUT, content="Cerrar sesión", on_click=self.preguntar_salir),
+                ft.PopupMenuItem(icon=ft.Icons.SYSTEM_UPDATE, content="Buscar actualizaciones",
+                                 on_click=self.buscar_actualizaciones),
                 ft.PopupMenuItem(icon=ft.Icons.INFO_OUTLINE, content=f"Join In {texto_version()}"),
             ],
         )
@@ -111,20 +112,24 @@ class PantallaTablero(Pantalla):
                     [
                         ft.Icon(ft.Icons.SYSTEM_UPDATE, color=TINTA),
                         ft.Column(
-                            [c.texto(f"Hay una versión nueva de Join In ({nueva})", 15, ft.FontWeight.W_800),
-                             c.texto("Descárgala e instálala encima de esta: no pierdes nada.", 13)],
+                            [c.texto("Actualización disponible", 15, ft.FontWeight.W_800),
+                             c.texto(f"Join In {nueva} ya está lista. Se instala encima de esta: "
+                                     "no pierdes tu sesión ni tus avisos.", 13)],
                             spacing=2, expand=True, tight=True,
                         ),
                     ],
                     spacing=12,
                 ),
-                ft.Row([ft.Button("Descargar", icon=ft.Icons.DOWNLOAD, url=URL_DESCARGA,
+                ft.Row([ft.Button("Actualizar", icon=ft.Icons.SYSTEM_UPDATE_ALT, on_click=self.app.actualizar_app,
                                   style=ft.ButtonStyle(bgcolor=TINTA, color=BLANCO,
                                                        shape=ft.RoundedRectangleBorder(radius=12)))]),
             ],
             color=AMARILLO,
             borde=AMARILLO,
         )
+
+    async def buscar_actualizaciones(self, e=None) -> None:
+        await self.app.revisar_version(manual=True)
 
     def _texto_saludo(self) -> str:
         nombre = (self.app.nombre or "").split()

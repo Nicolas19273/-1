@@ -18,6 +18,23 @@ Habla con el servidor de Render (`app.py` de la raíz), que guarda los datos en 
 La primera vez del día la app puede tardar hasta un minuto en conectar: el plan
 gratis de Render duerme el servidor cuando nadie lo usa.
 
+## Actualizar
+
+No hace falta volver a GitHub ni desinstalar. Cuando hay una versión nueva, el
+tablero muestra **Actualización disponible** → **Actualizar**: la app baja la
+versión nueva (con su avance en pantalla) y Android pregunta «¿Quieres
+actualizar esta app?» → **Actualizar**. Se mantienen la sesión y los avisos.
+
+- La primera vez, Android pide permiso para que Join In instale su
+  actualización («Permitir de esta fuente»). La app lo explica y abre el ajuste.
+- También se puede buscar a mano: menú de la cuenta → **Buscar actualizaciones**.
+- Funciona solo si todas las versiones van firmadas con la misma clave (ver
+  «Firma del APK» más abajo). Sin eso, Android no deja instalar encima.
+
+Por dentro (`src/joinin/actualizar.py`): la app compara su versión con la
+última de Releases, baja el APK con el DownloadManager de Android y abre el
+instalador del sistema (con pyjnius). Fuera de Android abre el enlace.
+
 ## Cómo se arma el APK
 
 No hace falta instalar nada en el computador. Cada vez que se sube un cambio,
@@ -29,7 +46,8 @@ GitHub Actions (`.github/workflows/app.yml`):
 3. arma el APK con `flet build apk --split-per-abi` (uno por tipo de
    procesador, más livianos que uno para todos),
 4. instala el APK en un emulador de Android, lo abre y revisa que llegue a
-   una pantalla sin errores (`app_movil/pruebas/emulador.sh`),
+   una pantalla sin errores, y que **Actualizar** baje el APK y abra el
+   instalador de Android (`app_movil/pruebas/emulador.sh`),
 5. en `main`, publica en **Releases** `join-in.apk` (celulares de 64 bits,
    casi todos) y `join-in-32bits.apk` (celulares antiguos).
 
