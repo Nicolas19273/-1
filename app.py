@@ -45,6 +45,8 @@ from datos import ErrorValidacion
 EN_INTERNET = "RENDER" in os.environ or "PORT" in os.environ
 URL_PUBLICA = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
 VERSION_API = 1
+# Siempre el APK más nuevo (lo publica .github/workflows/app.yml al subir a main).
+URL_DESCARGA_APP = "https://github.com/Nicolas19273/-1/releases/latest/download/join-in.apk"
 
 _FORMATO_TOKEN = re.compile(r"^[0-9a-f]{32}$")
 
@@ -242,6 +244,14 @@ class API:
     def salud(self, request: Request, cuerpo: dict) -> dict:
         """Respuesta liviana para saber si el servidor está despierto (no usa la BD)."""
         return {"ok": True, "version": VERSION_API}
+
+    def inicio(self, request: Request, cuerpo: dict) -> dict:
+        """Quien abra el enlace antiguo en el navegador ve a dónde se fue Join In."""
+        return {
+            "join_in": "Join In ahora es una app para Android.",
+            "descarga": URL_DESCARGA_APP,
+            "version_api": VERSION_API,
+        }
 
     def configuracion(self, request: Request, cuerpo: dict) -> dict:
         """Las reglas fijas que la app necesita para armar los formularios."""
@@ -564,6 +574,7 @@ class API:
     def rutas(self) -> list[Route]:
         r = _ruta
         return [
+            r("GET", "/", self.inicio),
             r("GET", "/salud", self.salud),
             r("GET", "/api/salud", self.salud),
             r("GET", "/api/configuracion", self.configuracion),

@@ -1,0 +1,118 @@
+# Prueba el servidor y la app, y arma el APK de Android.
+#
+# - En cualquier rama: corre las pruebas y deja el APK como «artifact» de la ejecución.
+# - En main: además publica el APK como una versión (Releases). El enlace
+#   https://github.com/Nicolas19273/-1/releases/latest/download/join-in.apk
+#   siempre baja el más nuevo.
+#
+# Firma: si el repositorio tiene los secretos ANDROID_KEYSTORE_BASE64 y
+# ANDROID_KEYSTORE_PASSWORD, cada APK se firma con la misma clave y se puede
+# instalar encima del anterior. Sin ellos se usa una clave de prueba distinta
+# cada vez (hay que desinstalar antes de instalar una versión nueva).
+
+name: App Android
+
+on:
+  push:
+    branches: [main, app-movil]
+    paths:
+      - "app_movil/**"
+      - "*.py"
+      - "pruebas/**"
+      - "requirements.txt"
+      - ".github/workflows/app.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pruebas:
+    name: Pruebas (servidor y app)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt requests certifi "flet>=1.1,<2"
+      - name: Prueba de la API del servidor
+        run: python pruebas/test_api.py
+      - name: Prueba de la app (pantallas con Flet real + servidor local)
+        run: python app_movil/pruebas/test_app.py
+
+  apk:
+    name: Construir APK
+    needs: pruebas
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      PYTHONUTF8: "1"
+      FLET_CLI_NO_RICH_OUTPUT: "1"
+      VERSION: 1.0.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Instalar Flet
+        run: pip install "flet[all]>=1.1,<2"
+
+      - name: Preparar la firma (si hay secretos)
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE" ]; then
+            echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/join-in.jks"
+            echo "Firma: clave del proyecto (secreto ANDROID_KEYSTORE_BASE64)."
+          else
+            echo "::warning::Sin el secreto ANDROID_KEYSTORE_BASE64: el APK se firma con una clave de prueba distinta en cada versión."
+          fi
+
+      - name: Construir APK
+        working-directory: app_movil
+        env:
+          CLAVE: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          FIRMA=()
+          if [ -f "$RUNNER_TEMP/join-in.jks" ]; then
+            export FLET_ANDROID_SIGNING_KEY_STORE_PASSWORD="$CLAVE"
+            export FLET_ANDROID_SIGNING_KEY_PASSWORD="$CLAVE"
+            FIRMA=(--android-signing-key-store "$RUNNER_TEMP/join-in.jks" --android-signing-key-alias joinin)
+          fi
+          flet build apk --yes --verbose \
+            --build-number "${{ github.run_number }}" --build-version "$VERSION" \
+            "${FIRMA[@]}"
+
+      - name: Juntar el APK
+        run: |
+          find app_movil/build -name "*.apk" -exec ls -la {} \;
+          APK=$(find app_movil/build -name "*.apk" | head -n 1)
+          test -n "$APK"
+          cp "$APK" join-in.apk
+          ls -la join-in.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: join-in-${{ env.VERSION }}
+          path: join-in.apk
+          retention-days: 30
+
+      - name: Publicar la versión (solo main)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "app-v$VERSION" join-in.apk \
+            --title "Join In para Android $VERSION" \
+            --notes "Descarga join-in.apk en tu celular Android y ábrelo para instalarlo (puede pedirte permitir instalar apps de esta fuente)." \
+            --latest

@@ -1371,7 +1371,7 @@ class Administracion:
 
     def agregar_admin(self, persona_id: str | None, ahora: datetime | None = None) -> None:
         if not persona_id:
-            raise ErrorValidacion("No pudimos reconocer tu navegador. Recarga la página.")
+            raise ErrorValidacion("No pudimos reconocer tu celular. Cierra la app y ábrela de nuevo.")
         if self.es_admin(persona_id):
             return
         with _conexion() as con:

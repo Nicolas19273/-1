@@ -69,8 +69,8 @@ class Acceso:
     MINUTOS_EN_MEMORIA = 5  # cuánto se recuerda una sesión sin volver a la base de datos
 
     MENSAJE_EN_USO = (
-        "Este correo ya está en uso en otro navegador. Si es tuyo, cierra sesión en ese navegador "
-        "(botón con tus iniciales → Cerrar sesión) o pide a la administración que lo libere."
+        "Este correo ya está en uso en otro celular. Si es tuyo, cierra sesión en ese celular "
+        "(ícono de tu cuenta → Cerrar sesión) o pide a la administración que lo libere."
     )
 
     _CORREO = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?@" + re.escape(DOMINIO_PERMITIDO) + r"$")
@@ -260,7 +260,7 @@ class Acceso:
         """
         correo = self._exigir_correo(correo)
         if not dispositivo or not _FORMATO_DISPOSITIVO.match(dispositivo):
-            raise ErrorValidacion("No pudimos reconocer tu navegador. Recarga la página.")
+            raise ErrorValidacion("No pudimos reconocer tu celular. Cierra la app y ábrela de nuevo.")
         with self.__candado:
             if self.__verificados.get(correo, 0) < time.time():
                 raise ErrorValidacion("Tu código ya no es válido. Pide uno nuevo.")

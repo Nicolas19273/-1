@@ -1,0 +1,27 @@
+# Join In: app de Android hecha en Python con Flet.
+# El APK se arma solo en GitHub Actions (.github/workflows/app.yml).
+# Para probarla en tu computador:  cd app_movil && flet run src/main.py
+
+[project]
+name = "join-in"
+version = "1.0.0"
+description = "Join In: crea avisos y únete a eventos con estudiantes de la Universidad de Los Lagos, en Osorno."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "flet>=1.1,<2",
+  "certifi",   # certificados para conectarse por HTTPS al servidor desde Android
+  "tzdata",    # zona horaria de Chile en el celular
+]
+
+[tool.flet]
+product = "Join In"
+org = "com.joinin"
+company = "Join In"
+copyright = "Proyecto Join In"
+
+[tool.flet.app]
+path = "src"
+
+[tool.flet.android]
+split_per_abi = false  # un solo APK que sirve en cualquier celular Android
