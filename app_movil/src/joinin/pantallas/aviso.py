@@ -133,7 +133,7 @@ class PantallaAviso(Pantalla):
         if a["abierto"]:
             botones.append(c.boton_claro("Invitar", self.compartir, ft.Icons.PERSON_ADD_ALT, color=fuerte))
         datos: list[ft.Control] = []
-        valor = c.precio(a)
+        valor = c.precio(a, sobre_color=True)
         if valor is not None:
             datos.append(ft.Row([valor]))
         datos += [

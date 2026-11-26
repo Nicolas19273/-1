@@ -266,7 +266,7 @@ class PantallaAdminDenuncias(PantallaAdminBase):
                 ft.Row([c.chip_categoria(aviso["categoria"], aviso["nombre_categoria"]),
                         c.chip(f"{len(denuncias)} denuncia{'s' if len(denuncias) != 1 else ''}", ft.Icons.FLAG,
                                color=ROJO, fondo=ROJO_SUAVE)], spacing=6, wrap=True),
-                c.texto(aviso["titulo"], 17, ft.FontWeight.W_800),
+                c.titulo(aviso["titulo"], 22),
                 c.suave(f"{aviso['lugar']} · {f.texto_fecha_evento(f.leer_fecha(aviso['inicio_evento']), momento)}"),
             ]
             if aviso.get("descripcion"):
@@ -592,7 +592,7 @@ class PantallaAdminAvisos(PantallaAdminBase):
         botones.append(c.boton_peligro("Borrar para siempre", partial(self.preguntar_borrar, a), ft.Icons.DELETE_FOREVER))
         return c.tarjeta([
             ft.Row([c.chip_categoria(a["categoria"], a["nombre_categoria"]), marca], spacing=6, wrap=True),
-            c.texto(a["titulo"], 16, ft.FontWeight.W_800),
+            c.titulo(a["titulo"], 22),
             c.suave(f"Organiza {a['creador']} · {a['lugar']} · {f.texto_fecha_evento(inicio, self.momento)}"),
             c.suave(f"{a['ocupados']} de {a['personas_necesarias']} · {f.texto_comentarios(a.get('comentarios', 0))}"),
             ft.Row(botones, wrap=True, spacing=0),

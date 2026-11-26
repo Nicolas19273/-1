@@ -115,10 +115,13 @@ def dato(icono, valor: str, color: str = TINTA, color_icono: str = GRIS, tam: in
     )
 
 
-def precio(aviso: dict) -> ft.Container | None:
+def precio(aviso: dict, sobre_color: bool = False) -> ft.Container | None:
+    """«Gratis» o «$2.000 por persona». sobre_color: para el encabezado de color del aviso."""
     if aviso.get("valor") is None:
         return None
     if aviso["valor"] == 0:
+        if sobre_color:
+            return chip("Gratis", ft.Icons.MONEY_OFF, color=BLANCO, fondo=ft.Colors.with_opacity(0.18, BLANCO))
         return chip("Gratis", ft.Icons.MONEY_OFF, color=COLOR_PRINCIPAL, fondo="#DDF0E3")
     return chip(f.texto_valor(aviso["valor"]), ft.Icons.PAYMENTS, color=TINTA, fondo=AMARILLO)
 
