@@ -322,18 +322,18 @@ def boton_principal(etiqueta: str, al_tocar: Callable | None, icono=None, expand
     estilo = _estilo_boton(AMARILLO, TINTA)
     estilo.side = ft.BorderSide(2, TINTA)
     estilo.text_style = ft.TextStyle(size=16, weight=ft.FontWeight.W_800)
-    return ft.Button(etiqueta, icon=icono, on_click=al_tocar, expand=expandir, style=estilo)
+    return ft.Button(etiqueta, icon=icono, on_click=al_tocar, expand=expandir or None, style=estilo)
 
 
 def boton_oscuro(etiqueta: str, al_tocar: Callable | None, icono=None, expandir: bool = True) -> ft.Button:
-    return ft.Button(etiqueta, icon=icono, on_click=al_tocar, expand=expandir,
+    return ft.Button(etiqueta, icon=icono, on_click=al_tocar, expand=expandir or None,
                      style=_estilo_boton(TINTA, BLANCO, vertical=14, tam=15))
 
 
 def boton_claro(etiqueta: str, al_tocar: Callable | None = None, icono=None, color: str = COLOR_PRINCIPAL,
                 url: str | None = None, expandir: bool = False) -> ft.Button:
     """Botón blanco (por ejemplo, «Cómo llegar» sobre el color de la categoría)."""
-    return ft.Button(etiqueta, icon=icono, on_click=al_tocar, url=url, expand=expandir,
+    return ft.Button(etiqueta, icon=icono, on_click=al_tocar, url=url, expand=expandir or None,
                      style=_estilo_boton(BLANCO, color, vertical=12, tam=14))
 
 

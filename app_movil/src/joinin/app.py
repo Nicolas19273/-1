@@ -108,6 +108,7 @@ class Pantalla:
                 bgcolor=FONDO,
                 color=TINTA,
                 elevation=0,
+                elevation_on_scroll=0,  # sin el tinte verde al deslizar: la barra mantiene su color
                 actions=extra.pop("acciones", None) or [],
             ) if titulo is not None else None,
             bgcolor=FONDO,

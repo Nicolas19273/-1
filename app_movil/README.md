@@ -71,15 +71,32 @@ app_movil/
   pyproject.toml          nombre, versión y dependencias (flet, certifi, tzdata)
   src/main.py             punto de entrada: ft.run(iniciar_app)
   src/assets/icon.png     ícono de la app
+  src/assets/fonts/       letras Archivo (licencia SIL OFL, en OFL.txt)
   src/joinin/
     app.py                AppJoinIn: sesión del celular, navegación y pedidos
     cliente.py            ClienteAPI: habla con el servidor (urllib + JSON)
     formato.py            textos de fechas, cupos y precios
-    estilo.py             colores e íconos por categoría
-    componentes.py        tarjetas, chips, botones
+    estilo.py             colores, letras, íconos por categoría y el tema
+    componentes.py        la ficha «+N», tarjetas, chips, botones
     pantallas/            inicio, ingreso, tablero, aviso, crear, buzón, admin
+    recorrido.py          recorrido de capturas (solo en el emulador de GitHub)
+  herramientas/armar_fuentes.py   cómo se armaron las letras desde Archivo
   pruebas/test_app.py     prueba de punta a punta
+  pruebas/emulador.sh     abre el APK en un emulador y saca fotos de cada pantalla
 ```
+
+## Diseño
+
+- **La ficha.** El cuadrado amarillo con «+1» (el que falta) es el logo, y en cada
+  aviso dice cuántos faltan: «+2» en amarillo; un visto verde si se completó.
+- **Letras.** Archivo, de Omnibus-Type: angosta y gruesa para títulos y números
+  (como un marcador), normal para el texto. Van dentro del APK, así que se ven
+  igual en todos los celulares.
+- **Colores.** Verde cancha `#0E6B3F`, amarillo `#FFD21F`, tinta `#0B1F17` y fondo
+  gris papel `#F3F4EF`. Cada categoría tiene su color (el detalle del aviso usa el
+  de su categoría arriba).
+- **El ingreso** muestra la mitad de una cancha pintada con cal, con la ficha en el
+  punto central (tocarla 5 veces abre la administración).
 
 ## Probar en el computador
 

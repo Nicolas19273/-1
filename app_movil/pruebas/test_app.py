@@ -202,6 +202,13 @@ def revisar_controles(pagina) -> None:
                 assert str(x.scroll).endswith("HIDDEN") or x.scroll == "hidden", (
                     "una fila que se desliza de lado no debe mostrar barra (tapa los textos)"
                 )
+            if type(x).__name__ == "Row" and getattr(x, "wrap", False):
+                # En una fila que salta de línea (Wrap de Flutter), un hijo con expand
+                # (aunque sea False) se envuelve en Expanded y Android dibuja un cuadro gris.
+                for hijo in x.controls:
+                    assert getattr(hijo, "expand", None) in (None,), (
+                        f"{type(hijo).__name__} con expand={hijo.expand!r} dentro de una fila con wrap"
+                    )
     if not FLET_REAL:
         return
     for raiz in [*pagina.views, *pagina.abiertos]:

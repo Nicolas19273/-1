@@ -96,6 +96,11 @@ for nombre in tablero aviso aviso_unirse crear crear_abajo buzon admin admin_avi
 done
 adb logcat -d > "$SALIDA/logcat_recorrido.txt"
 grep -h "\[recorrido\]" "$SALIDA/logcat_recorrido.txt" | sed 's/^.*\[recorrido\]/  [recorrido]/' | head -20
+# Errores de dibujo de Flutter (en el celular se ven como un cuadro gris)
+if grep -E "EXCEPTION CAUGHT BY|Another exception was thrown|Incorrect use of ParentDataWidget" \
+     "$SALIDA/logcat_recorrido.txt" | head -20 | grep .; then
+  echo "::error::Flutter no pudo dibujar alguna pantalla (ver logcat_recorrido.txt)"; exit 1
+fi
 if grep -n -E "Traceback" "$SALIDA/logcat_recorrido.txt"; then
   echo "::error::Error de Python durante el recorrido (ver logcat_recorrido.txt)"; exit 1
 fi
