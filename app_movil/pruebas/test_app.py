@@ -12,6 +12,7 @@ Necesita: flet, starlette, uvicorn, tzdata, certifi (requirements de la raíz + 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import inspect
 import os
 import socket
@@ -124,9 +125,18 @@ def _es_control(x) -> bool:
     return isinstance(x, ft.BaseControl)
 
 
+def _atributos(control):
+    """(nombre, valor) de cada propiedad. Flet real guarda los valores aparte: se leen por sus campos."""
+    if dataclasses.is_dataclass(control):
+        for campo_ in dataclasses.fields(control):
+            yield campo_.name, getattr(control, campo_.name, None)
+    else:
+        yield from vars(control).items()
+
+
 def hijos(control) -> list:
     salida = []
-    for nombre, valor in vars(control).items():
+    for nombre, valor in _atributos(control):
         if nombre.startswith("_") or nombre in ("parent", "page", "data"):
             continue
         if _es_control(valor):
@@ -175,21 +185,30 @@ def hay_exacto(pagina, texto: str) -> bool:
     return texto in textos(pantalla_visible(pagina))
 
 
+try:  # Flet 1.x revisa cada control antes de dibujarlo (tipos, rangos, combinaciones)
+    from flet.utils.validation import validate as _validar_flet
+except Exception:
+    _validar_flet = None
+
+REVISADOS = 0
+
+
 def revisar_controles(pagina) -> None:
-    """Con Flet real: las validaciones que Flet hace antes de dibujar (before_update)."""
+    """Con Flet real: las mismas validaciones que Flet hace antes de dibujar la pantalla."""
+    global REVISADOS
     if not FLET_REAL:
         return
     for raiz in [*pagina.views, *pagina.abiertos]:
         for x in recorrer(raiz):
-            antes = getattr(x, "before_update", None)
-            if antes is None:
-                continue
             try:
-                antes()
-            except AssertionError:
+                x.before_update()
+            except (AssertionError, ValueError):
                 raise
-            except Exception:  # algunas validaciones piden estar dentro de una página real
+            except Exception:  # algunas piden estar dentro de una página real
                 pass
+            if _validar_flet is not None:
+                _validar_flet(x)
+            REVISADOS += 1
 
 
 async def _disparar(manejador, control):
@@ -601,7 +620,9 @@ async def prueba():
     assert formato.iniciales("ana rojas") == "AR" and formato.iniciales("") == "?"
     print("OK: textos de fechas, valores y cupos")
 
-    print(f"OK: todo bien ({'Flet real ' + getattr(ft, '__version__', '') if FLET_REAL else 'Flet falso'})")
+    if FLET_REAL:
+        assert _validar_flet is not None and REVISADOS > 1000, REVISADOS
+    print(f"OK: todo bien ({f'Flet real {ft.__version__}, {REVISADOS} controles validados' if FLET_REAL else 'Flet falso'})")
 
 
 asyncio.run(prueba())

@@ -228,7 +228,10 @@ class AppJoinIn:
     def cerrar_dialogo(self, dialogo: ft.DialogControl) -> None:
         """Cierra ese diálogo en particular (no «el último», que podría ser un aviso de abajo)."""
         dialogo.open = False
-        self.page.update()
+        try:
+            dialogo.update()  # como lo hace Flet en pop_dialog
+        except RuntimeError:  # todavía sin página (por ejemplo, en las pruebas)
+            self.page.update()
 
     # ------------------------------------------------------------------ servidor
 
