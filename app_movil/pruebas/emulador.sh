@@ -31,9 +31,14 @@ done
 
 adb exec-out screencap -p > "$SALIDA/pantalla.png"
 adb logcat -d > "$SALIDA/logcat.txt"
-if command -v convert >/dev/null; then  # una vista chica de la pantalla, legible desde el registro
-  convert "$SALIDA/pantalla.png" -resize 360x -quality 70 "$SALIDA/pantalla.jpg" &&
-    { echo "--- pantalla.jpg (base64) ---"; base64 -w0 "$SALIDA/pantalla.jpg"; echo; echo "--- fin ---"; }
+# Una vista chica de la pantalla, legible desde el registro de la ejecución.
+if command -v ffmpeg >/dev/null; then
+  ffmpeg -loglevel error -y -i "$SALIDA/pantalla.png" -vf scale=360:-1 -q:v 7 "$SALIDA/pantalla.jpg"
+elif command -v magick >/dev/null; then
+  magick "$SALIDA/pantalla.png" -resize 360x -quality 70 "$SALIDA/pantalla.jpg"
+fi
+if [ -s "$SALIDA/pantalla.jpg" ]; then
+  echo "--- pantalla.jpg (base64) ---"; base64 -w0 "$SALIDA/pantalla.jpg"; echo; echo "--- fin ---"
 fi
 
 echo "Textos en pantalla:"
