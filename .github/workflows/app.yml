@@ -65,6 +65,15 @@ jobs:
       - name: Instalar Flet
         run: pip install "flet[all]>=1.1,<2"
 
+      - name: Recordar las descargas de Gradle entre ejecuciones
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('app_movil/pyproject.toml') }}
+          restore-keys: gradle-${{ runner.os }}-
+
       - name: Preparar la firma (si hay secretos)
         env:
           KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -99,9 +108,13 @@ jobs:
             FIRMA=(--android-signing-key-store "$RUNNER_TEMP/join-in.jks" --android-signing-key-alias joinin)
           fi
           # Un APK por tipo de procesador: cada uno pesa un tercio del APK «para todos».
-          flet build apk --yes --verbose --split-per-abi \
-            --build-number "${{ github.run_number }}" --build-version "$VERSION" \
-            "${FIRMA[@]}"
+          construir() {
+            flet build apk --yes --verbose --split-per-abi \
+              --build-number "${{ github.run_number }}" --build-version "$VERSION" \
+              "${FIRMA[@]}"
+          }
+          # Maven Central a veces responde «429 Too Many Requests»: se reintenta después de una pausa.
+          construir || { echo "::warning::Falló el primer intento; reintento en 90 s."; sleep 90; construir; }
 
       - name: Juntar los APK
         run: |
