@@ -85,7 +85,7 @@ adb push "$SALIDA/recorrido.json" "$CARPETA_APP/recorrido.json" >/dev/null
 adb logcat -c
 adb shell monkey -p "$PAQUETE" -c android.intent.category.LAUNCHER 1 >/dev/null
 fotos=0
-for nombre in tablero aviso crear buzon admin admin_avisos; do
+for nombre in tablero aviso aviso_unirse crear crear_abajo buzon admin admin_avisos; do
   listo=""
   for i in $(seq 1 90); do
     if adb logcat -d | grep -q "\[recorrido\] $nombre"; then listo="si"; break; fi
@@ -99,8 +99,8 @@ grep -h "\[recorrido\]" "$SALIDA/logcat_recorrido.txt" | sed 's/^.*\[recorrido\]
 if grep -n -E "Traceback" "$SALIDA/logcat_recorrido.txt"; then
   echo "::error::Error de Python durante el recorrido (ver logcat_recorrido.txt)"; exit 1
 fi
-if [ "$fotos" -lt 6 ]; then
-  echo "::error::El recorrido no llegó a todas las pantallas ($fotos de 6)"; exit 1
+if [ "$fotos" -lt 8 ]; then
+  echo "::error::El recorrido no llegó a todas las pantallas ($fotos de 8)"; exit 1
 fi
 echo "OK: recorrido completo ($fotos pantallas)"
 adb shell am force-stop "$PAQUETE"

@@ -10,7 +10,7 @@ from .. import componentes as c
 from .. import formato as f
 from ..app import Pantalla, ToquesSecretos
 from ..version import VERSION
-from ..estilo import AMARILLO, BLANCO, COLOR_PRINCIPAL, GRIS_SUAVE, TINTA, colores_de, icono_de
+from ..estilo import AMARILLO, BLANCO, COLOR_PRINCIPAL, GRIS, GRIS_SUAVE, LETRA_TITULOS, TINTA, colores_de, icono_de
 
 TODAS = ""
 
@@ -24,16 +24,29 @@ def chip_filtro(etiqueta: str, elegido: bool, al_tocar, icono=None, color: str =
     """Un botón redondo que se marca cuando está elegido (para filtros y opciones)."""
     hijos: list[ft.Control] = []
     if icono is not None:
-        hijos.append(ft.Icon(icono, size=18, color=BLANCO if elegido else color))
-    hijos.append(ft.Text(etiqueta, size=13, weight=ft.FontWeight.W_700, color=BLANCO if elegido else color))
+        hijos.append(ft.Icon(icono, size=16, color=BLANCO if elegido else color))
+    hijos.append(ft.Text(etiqueta, size=13, weight=ft.FontWeight.W_700, color=BLANCO if elegido else TINTA))
     return ft.Container(
         content=ft.Row(hijos, spacing=6, tight=True),
-        bgcolor=color if elegido else fondo,
+        bgcolor=color if elegido else BLANCO,
         border=ft.Border.all(1, color if elegido else GRIS_SUAVE),
-        border_radius=ft.BorderRadius.all(22),
-        padding=ft.Padding.symmetric(horizontal=14, vertical=9),
+        border_radius=ft.BorderRadius.all(20),
+        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
         on_click=al_tocar,
         ink=True,
+    )
+
+
+def marca(al_tocar=None) -> ft.Control:
+    """La ficha chica con «+1» y el nombre: el título de arriba del tablero."""
+    return ft.Container(
+        ft.Row(
+            [c.ficha("+1", 30), ft.Text("Join In", font_family=LETRA_TITULOS, size=26, weight=ft.FontWeight.W_900,
+                                        color=TINTA)],
+            spacing=10,
+            tight=True,
+        ),
+        on_click=al_tocar,
     )
 
 
@@ -49,7 +62,8 @@ class PantallaTablero(Pantalla):
         self.cargado = False
 
     def vista(self) -> ft.View:
-        self.saludo = c.titulo(self._texto_saludo(), 24)
+        self.saludo = c.titulo(self._texto_saludo(), 34)
+        self.resumen = c.suave("Buscando avisos…", 14)
         # Sin barra de desplazamiento: en el celular se pintaba encima de los nombres.
         self.filtros = ft.Row(scroll=ft.ScrollMode.HIDDEN, spacing=8)
         self.banner = ft.Container(visible=False)
@@ -75,27 +89,28 @@ class PantallaTablero(Pantalla):
             ],
         )
         return self.vista_base(
-            "Join In",
+            marca(),
             [
-                self.saludo,
-                c.suave("Estos son los avisos abiertos ahora. Toca uno para ver los detalles y unirte. "
-                        "Desliza hacia abajo para actualizar."),
+                ft.Column([self.saludo, self.resumen], spacing=0),
                 self.banner,
                 self.filtros,
                 self.lista,
-                ft.Container(height=80),  # espacio para que el botón flotante no tape la última tarjeta
+                ft.Container(height=72),  # espacio para que el botón flotante no tape la última tarjeta
             ],
             al_refrescar=self.actualizar,
             al_tocar_titulo=ToquesSecretos(self.ir_a_admin).tocar,
             acciones=[
-                ft.IconButton(ft.Icons.INBOX, tooltip="Mi buzón", on_click=self.ir_al_buzon),
+                ft.IconButton(ft.Icons.INBOX_OUTLINED, tooltip="Mi buzón", on_click=self.ir_al_buzon),
                 menu,
+                ft.Container(width=4),
             ],
             floating_action_button=ft.FloatingActionButton(
-                content="Crear aviso",
+                content=ft.Text("Crear aviso", size=16, weight=ft.FontWeight.W_800, color=TINTA),
                 icon=ft.Icons.ADD,
                 bgcolor=AMARILLO,
                 foreground_color=TINTA,
+                shape=ft.RoundedRectangleBorder(radius=18, side=ft.BorderSide(2, TINTA)),
+                elevation=2,
                 on_click=self.ir_a_crear,
             ),
         )
@@ -110,26 +125,33 @@ class PantallaTablero(Pantalla):
             [
                 ft.Row(
                     [
-                        ft.Icon(ft.Icons.SYSTEM_UPDATE, color=TINTA),
+                        ft.Icon(ft.Icons.SYSTEM_UPDATE, color=TINTA, size=26),
                         ft.Column(
-                            [c.texto("Actualización disponible", 15, ft.FontWeight.W_800),
+                            [c.titulo("Actualización disponible", 21),
                              c.texto(f"Join In {nueva} ya está lista. Se instala encima de esta: "
                                      "no pierdes tu sesión ni tus avisos.", 13)],
                             spacing=2, expand=True, tight=True,
                         ),
                     ],
                     spacing=12,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
                 ),
-                ft.Row([ft.Button("Actualizar", icon=ft.Icons.SYSTEM_UPDATE_ALT, on_click=self.app.actualizar_app,
-                                  style=ft.ButtonStyle(bgcolor=TINTA, color=BLANCO,
-                                                       shape=ft.RoundedRectangleBorder(radius=12)))]),
+                ft.Row([c.boton_oscuro("Actualizar", self.app.actualizar_app, ft.Icons.SYSTEM_UPDATE_ALT,
+                                       expandir=False)]),
             ],
             color=AMARILLO,
-            borde=AMARILLO,
+            borde=TINTA,
+            espacio=12,
         )
 
     async def buscar_actualizaciones(self, e=None) -> None:
         await self.app.revisar_version(manual=True)
+
+    def _texto_resumen(self) -> str:
+        n = len(self.avisos)
+        if n == 0:
+            return "Ahora no hay avisos abiertos."
+        return "Hay 1 aviso abierto ahora." if n == 1 else f"Hay {n} avisos abiertos ahora."
 
     def _texto_saludo(self) -> str:
         nombre = (self.app.nombre or "").split()
@@ -141,6 +163,7 @@ class PantallaTablero(Pantalla):
         r = await self.app.llamar(self.api.tablero, avisar=not self.cargado)
         if r is None:
             if not self.cargado:
+                self.resumen.value = "Sin conexión con Join In"
                 self.lista.controls = [
                     c.vacio(ft.Icons.WIFI_OFF, "No pudimos cargar el tablero", "Revisa tu internet y desliza hacia abajo para reintentar."),
                 ]
@@ -149,6 +172,7 @@ class PantallaTablero(Pantalla):
         self.momento = f.leer_fecha(r["ahora"]) or f.ahora()
         self.avisos = r["avisos"]
         self.saludo.value = self._texto_saludo()
+        self.resumen.value = self._texto_resumen()
         self.item_admin.visible = self.app.es_admin
         self.mostrar_version_nueva()
         self._pintar_filtros()
@@ -186,7 +210,8 @@ class PantallaTablero(Pantalla):
         if not visibles:
             if self.filtro == TODAS:
                 vacio = c.vacio(ft.Icons.EVENT_BUSY, "No hay avisos abiertos",
-                                "Sé el primero: toca «Crear aviso» y publica lo que te falta.")
+                                "Sé el primero: publica lo que te falta y deja que el resto se una.",
+                                c.boton_principal("Publicar un aviso", self.ir_a_crear, ft.Icons.ADD, expandir=False))
             else:
                 nombre = next((x["nombre"] for x in self.app.config.get("categorias", []) if x["clave"] == self.filtro),
                               "esta categoría")

@@ -9,8 +9,8 @@ import flet as ft
 
 from .. import componentes as c
 from ..app import Pantalla, ToquesSecretos
-from ..estilo import BLANCO, FONDO, GRIS_SUAVE, TINTA
-from .inicio import logo
+from ..estilo import BLANCO, CANCHA_OSCURA, FONDO, GRIS_SUAVE, TINTA
+from .inicio import barra_de_color, cancha, logo, nombre_grande
 
 
 class PantallaIngreso(Pantalla):
@@ -28,36 +28,32 @@ class PantallaIngreso(Pantalla):
         self.tarjeta = ft.Container(
             bgcolor=BLANCO,
             border=ft.Border.all(1, GRIS_SUAVE),
-            border_radius=ft.BorderRadius.all(20),
-            padding=ft.Padding.all(18),
+            border_radius=ft.BorderRadius.all(24),
+            padding=ft.Padding.all(20),
         )
         self.pintar()
-        marca = ft.Column(
+        # Arriba, la cancha con la ficha «+1» en el punto central (tocarla 5 veces abre la
+        # administración) y el nombre bien grande. Abajo, el paso del ingreso en que vas.
+        marca = cancha(
             [
-                ft.Container(logo(80), on_click=self.secreto.tocar),
-                ft.Text("Join In", size=36, weight=ft.FontWeight.W_900, color=TINTA),
-                c.texto("Arma tu panorama con estudiantes de la ULagos: únete a un partido, una junta de "
-                        "estudio o una salida, o publica lo que te falta.", 15, text_align=ft.TextAlign.CENTER),
+                nombre_grande(),
+                ft.Text("Arma tu panorama con estudiantes de la ULagos: únete a un partido, una junta de "
+                        "estudio o una salida, o publica lo que te falta.", size=15, color=BLANCO,
+                        text_align=ft.TextAlign.CENTER),
             ],
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=10,
+            centro=ft.Container(logo(88), on_click=self.secreto.tocar),
         )
-        # Esta pantalla no tiene barra de arriba: SafeArea evita que el logo y el título
-        # queden debajo de la barra de estado del celular (la hora, la batería).
-        # Todo va centrado en la pantalla, con el nombre de la app bien a la vista.
         return ft.View(
             route=self.ruta,
             bgcolor=FONDO,
-            padding=ft.Padding.symmetric(horizontal=20, vertical=12),
+            padding=ft.Padding.all(0),
+            spacing=20,
+            appbar=barra_de_color(CANCHA_OSCURA),
             scroll=ft.ScrollMode.AUTO,
-            vertical_alignment=ft.MainAxisAlignment.CENTER,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             controls=[
-                ft.SafeArea(
-                    content=ft.Column([marca, self.tarjeta], spacing=28,
-                                      horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
-                    minimum_padding=ft.Padding.symmetric(vertical=16),
-                ),
+                marca,
+                ft.Container(self.tarjeta, padding=ft.Padding.only(left=16, right=16, bottom=24)),
             ],
         )
 
@@ -72,11 +68,12 @@ class PantallaIngreso(Pantalla):
                 hint_text=f"nombre@{dominio}",
                 value=self.correo,
                 keyboard_type=ft.KeyboardType.EMAIL,
+                prefix_icon=ft.Icons.ALTERNATE_EMAIL,
                 autofocus=bool(self.correo),  # al abrir la app, sin teclado: primero se ve todo
                 on_submit=self.enviar,
             )
             controles = [
-                c.titulo("Ingresa con tu correo", 20),
+                c.titulo("Ingresa con tu correo", 26),
                 c.suave(f"Solo pueden entrar estudiantes con correo @{dominio}. Te enviaremos un código."),
                 self.campo_correo,
                 ft.Row([c.boton_principal("Enviarme el código", self.enviar, ft.Icons.MAIL)]),
@@ -91,7 +88,7 @@ class PantallaIngreso(Pantalla):
                 on_submit=self.verificar,
             )
             controles = [
-                c.titulo("Revisa tu correo", 20),
+                c.titulo("Revisa tu correo", 26),
                 c.suave(f"Te enviamos un código de {largo} dígitos a {self.correo}. Vale 10 minutos."),
             ]
             if self.codigo_prueba:
@@ -114,13 +111,14 @@ class PantallaIngreso(Pantalla):
                 on_submit=self.registrar,
             )
             controles = [
-                c.titulo("¿Cómo te llamas?", 20),
+                c.titulo("¿Cómo te llamas?", 26),
                 c.suave("Es lo que verán los demás cuando te unas a un aviso. Solo te lo pedimos esta vez."),
                 self.campo_nombre,
                 ft.Row([c.boton_principal("Listo", self.registrar, ft.Icons.CHECK)]),
             ]
         controles.append(c.suave("Un correo, un celular: después de esta vez, este celular entra directo."))
-        self.tarjeta.content = ft.Column(controles, spacing=14, tight=True)
+        self.tarjeta.content = ft.Column(controles, spacing=14, tight=True,
+                                         horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
 
     def _cambiar_a(self, paso: str) -> None:
         self.paso = paso

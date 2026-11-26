@@ -36,8 +36,16 @@ async def recorrer(app) -> None:
             await app.ir(PantallaAviso(app, avisos[0]["id"]))
             await foto("aviso")
             await app.volver()
+        # uno al que todavía no se unió (con la barra «Unirme» abajo)
+        ajeno = next((a for a in avisos if not a.get("es_mio") and not a.get("me_uni")), None)
+        if ajeno is not None:
+            await app.ir(PantallaAviso(app, ajeno["id"]))
+            await foto("aviso_unirse")
+            await app.volver()
         await app.ir(PantallaCrear(app))
         await foto("crear")
+        await app.page.views[-1].scroll_to(offset=-1, duration=0)  # abajo: la vista previa y «Publicar»
+        await foto("crear_abajo")
         await app.volver()
         await app.ir(PantallaBuzon(app))
         await foto("buzon")

@@ -80,7 +80,7 @@ class PantallaAdminEntrada(Pantalla):
             return
         controles: list[ft.Control] = [
             ft.Icon(ft.Icons.ADMIN_PANEL_SETTINGS, size=56, color=COLOR_PRINCIPAL),
-            c.titulo("Solo para quien administra Join In", 20),
+            c.titulo("Solo para quien administra Join In", 26),
             c.suave("Con la clave puedes revisar denuncias, ajustar el filtro de palabras, ver todos los avisos "
                     "y liberar correos. Este celular quedará como administrador hasta que salgas."),
         ]
@@ -116,14 +116,14 @@ def cifra(valor: int, etiqueta: str, icono) -> ft.Container:
     return ft.Container(
         content=ft.Column(
             [
-                ft.Icon(icono, size=22, color=COLOR_PRINCIPAL),
-                ft.Text(str(valor), size=26, weight=ft.FontWeight.W_900, color=TINTA),
-                ft.Text(etiqueta, size=12, color=GRIS),
+                ft.Row([c.titulo(str(valor), 36), ft.Icon(icono, size=22, color=COLOR_PRINCIPAL)],
+                       alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Text(etiqueta, size=12, color=GRIS, max_lines=2),
             ],
-            spacing=2,
+            spacing=0,
             tight=True,
         ),
-        width=156,
+        col=6,
         bgcolor=BLANCO,
         border=ft.Border.all(1, GRIS_SUAVE),
         border_radius=ft.BorderRadius.all(16),
@@ -136,7 +136,7 @@ class PantallaAdmin(PantallaAdminBase):
     se_refresca_sola = True
 
     def vista(self) -> ft.View:
-        self.cifras = ft.Row([c.cargando("Cargando cifras…")], wrap=True, spacing=8, run_spacing=8)
+        self.cifras = ft.ResponsiveRow([c.cargando("Cargando cifras…")], spacing=8, run_spacing=8)
         self.totales = c.suave("")
         self.secciones = ft.Column(spacing=8)
         self._pintar_secciones({})
@@ -145,10 +145,10 @@ class PantallaAdmin(PantallaAdminBase):
             [
                 self.cifras,
                 self.totales,
-                c.titulo("Moderar", 18),
+                c.titulo("Moderar", 22),
                 self.secciones,
                 ft.Divider(color=GRIS_SUAVE),
-                c.titulo("Tu sesión de administración", 18),
+                c.titulo("Tu sesión de administración", 22),
                 c.suave("Sal cuando termines, sobre todo si el celular no es tuyo."),
                 ft.Row([c.boton_oscuro("Salir de administración", self.salir, ft.Icons.LOGOUT)]),
                 ft.Row([c.boton_peligro("Cerrar la administración en todos los celulares", self.preguntar_salir_todos,
@@ -336,7 +336,7 @@ class PantallaAdminPalabras(PantallaAdminBase):
             [
                 c.tarjeta(
                     [
-                        c.titulo("Agregar al filtro", 18),
+                        c.titulo("Agregar al filtro", 22),
                         c.suave("Se aplica al instante en toda la app, sin volver a publicar el código."),
                         self.campo_palabra,
                         self.modo,
@@ -349,11 +349,11 @@ class PantallaAdminPalabras(PantallaAdminBase):
                     espacio=10,
                 ),
                 c.tarjeta(
-                    [c.titulo("Probar el filtro", 18), self.campo_prueba,
+                    [c.titulo("Probar el filtro", 22), self.campo_prueba,
                      ft.Row([c.boton_texto("Probar", self.probar, ft.Icons.PLAY_ARROW)]), self.resultado],
                     espacio=10,
                 ),
-                c.titulo("Reglas propias", 18),
+                c.titulo("Reglas propias", 22),
                 self.lista,
                 self.base,
             ],

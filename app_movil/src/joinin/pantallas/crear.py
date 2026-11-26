@@ -26,7 +26,49 @@ def texto_dia(dia: date, hoy: date) -> str:
 
 
 def seccion(titulo: str, ayuda: str, controles: list[ft.Control]) -> ft.Container:
-    return c.tarjeta([c.titulo(titulo, 18), c.suave(ayuda), *controles], espacio=12)
+    return c.tarjeta([ft.Column([c.titulo(titulo, 24), c.suave(ayuda, 14)], spacing=2), *controles], espacio=14,
+                     relleno=18)
+
+
+def mosaico_categoria(nombre: str, clave: str, elegido: bool, al_tocar) -> ft.Container:
+    """Una categoría para elegir: ícono en su círculo y el nombre abajo (de a tres por fila)."""
+    fuerte, claro = colores_de(clave)
+    return ft.Container(
+        content=ft.Column(
+            [
+                ft.Container(ft.Icon(icono_de(clave), size=22, color=fuerte if not elegido else BLANCO),
+                             width=40, height=40, border_radius=ft.BorderRadius.all(20),
+                             bgcolor=claro if not elegido else ft.Colors.with_opacity(0.2, BLANCO), alignment=ft.Alignment.CENTER),
+                ft.Text(nombre, size=12, weight=ft.FontWeight.W_700, color=BLANCO if elegido else TINTA,
+                        text_align=ft.TextAlign.CENTER, max_lines=2),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=6,
+            tight=True,
+        ),
+        col=4,
+        height=96,
+        bgcolor=fuerte if elegido else BLANCO,
+        border=ft.Border.all(1.5, fuerte if elegido else GRIS_SUAVE),
+        border_radius=ft.BorderRadius.all(16),
+        padding=ft.Padding.symmetric(horizontal=4, vertical=10),
+        alignment=ft.Alignment.CENTER,
+        on_click=al_tocar,
+        ink=True,
+    )
+
+
+def estilo_selector() -> ft.ButtonStyle:
+    """Los botones de día y hora: como un campo, con letra firme."""
+    return ft.ButtonStyle(
+        color=TINTA,
+        icon_color=COLOR_PRINCIPAL,
+        bgcolor=BLANCO,
+        side=ft.BorderSide(1, GRIS_SUAVE),
+        shape=ft.RoundedRectangleBorder(radius=14),
+        padding=ft.Padding.symmetric(horizontal=14, vertical=16),
+        text_style=ft.TextStyle(size=15, weight=ft.FontWeight.W_700),
+    )
 
 
 class Contador:
@@ -37,8 +79,7 @@ class Contador:
         self.minimo = minimo
         self.maximo = maximo
         self.al_cambiar = al_cambiar
-        self.numero = ft.Text(str(valor), size=20, weight=ft.FontWeight.W_800, color=TINTA, width=44,
-                              text_align=ft.TextAlign.CENTER)
+        self.numero = c.titulo(str(valor), 26, width=44, text_align=ft.TextAlign.CENTER)
         self.control = ft.Container(
             content=ft.Row(
                 [
@@ -90,24 +131,30 @@ class PantallaCrear(Pantalla):
         largo_lugar = cfg.get("largo_lugar", [3, 120])[1]
 
         # ¿Qué van a hacer?
-        self.categorias = ft.Row(wrap=True, spacing=8, run_spacing=8)
+        self.categorias = ft.ResponsiveRow(spacing=8, run_spacing=8)
         self.campo_titulo = ft.TextField(label="Título", hint_text="Ej: Pichanga 7 vs 7, falta uno",
-                                         max_length=largo_titulo, on_blur=self.revisar_titulo)
+                                         max_length=largo_titulo, on_blur=self.revisar_titulo,
+                                         on_change=self.cambio_texto,
+                                         capitalization=ft.TextCapitalization.SENTENCES)
         self.aviso_titulo = c.mensaje_error()
 
         # ¿Cuántos son?
         self.actuales = Contador(1, 1, self.max_personas - 1, self.cambiaron_personas)
         self.necesarias = Contador(2, 2, self.max_personas, self.cambiaron_personas)
-        self.previa_faltan = ft.Text("", size=18, weight=ft.FontWeight.W_800, color=TINTA)
+        self.previa_faltan = c.titulo("", 24)
+        self.previa_ficha = ft.Container()
         self.previa_barra = ft.Column()
 
         # ¿Dónde y cuándo?
         self.campo_lugar = ft.TextField(label="Lugar", hint_text="Ej: Cancha del liceo, Parque Chuyaca",
-                                        max_length=largo_lugar, on_blur=self.revisar_lugar)
+                                        max_length=largo_lugar, on_blur=self.revisar_lugar,
+                                        on_change=self.cambio_texto, prefix_icon=ft.Icons.PLACE_OUTLINED)
         self.aviso_lugar = c.mensaje_error()
         self.ubicacion = ft.Column(spacing=6)
-        self.boton_dia = ft.OutlinedButton("", icon=ft.Icons.CALENDAR_MONTH, on_click=self.elegir_dia, expand=True)
-        self.boton_hora = ft.OutlinedButton("", icon=ft.Icons.SCHEDULE, on_click=self.elegir_hora, expand=True)
+        self.boton_dia = ft.OutlinedButton("", icon=ft.Icons.CALENDAR_MONTH, on_click=self.elegir_dia, expand=3,
+                                           style=estilo_selector())
+        self.boton_hora = ft.OutlinedButton("", icon=ft.Icons.SCHEDULE, on_click=self.elegir_hora, expand=2,
+                                            style=estilo_selector())
 
         # Valor
         self.opciones_costo = ft.Row(spacing=8, wrap=True)
@@ -137,6 +184,7 @@ class PantallaCrear(Pantalla):
         self.opciones_duracion = ft.Row(spacing=8, wrap=True)
 
         self.boton_publicar = c.boton_principal("Publicar aviso", self.publicar, ft.Icons.CAMPAIGN)
+        self.previa = ft.Container()  # la tarjeta tal como se verá en el tablero
 
         self._pintar_categorias()
         self.cambiaron_personas(actualizar=False)
@@ -144,6 +192,7 @@ class PantallaCrear(Pantalla):
         self._pintar_fecha()
         self._pintar_costo()
         self._pintar_duracion()
+        self._pintar_previa()
 
         return self.vista_base(
             "Crear aviso",
@@ -158,9 +207,17 @@ class PantallaCrear(Pantalla):
                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                         ft.Row([c.texto("Necesitamos en total", 15, ft.FontWeight.W_700), self.necesarias.control],
                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        c.nota("Así lo verán en el tablero"),
-                        self.previa_faltan,
-                        self.previa_barra,
+                        ft.Container(
+                            ft.Column(
+                                [ft.Row([self.previa_ficha, self.previa_faltan], spacing=12),
+                                 self.previa_barra],
+                                spacing=12,
+                                tight=True,
+                            ),
+                            bgcolor="#F7F8F4",
+                            border_radius=ft.BorderRadius.all(16),
+                            padding=ft.Padding.all(14),
+                        ),
                     ],
                 ),
                 seccion(
@@ -177,6 +234,7 @@ class PantallaCrear(Pantalla):
                     "En tu buzón lo verás durante todo el plazo.",
                     [self.opciones_duracion],
                 ),
+                ft.Column([c.titulo("Así se verá en el tablero", 22), self.previa], spacing=8),
                 ft.Row([self.boton_publicar]),
                 ft.Container(height=24),
             ],
@@ -185,17 +243,40 @@ class PantallaCrear(Pantalla):
     # ------------------------------------------------------------------ partes
 
     def _pintar_categorias(self) -> None:
-        chips = []
-        for cat in self.app.config.get("categorias", []):
-            fuerte, claro = colores_de(cat["clave"])
-            chips.append(chip_filtro(cat["nombre"], cat["clave"] == self.categoria,
-                                     partial(self.elegir_categoria, cat["clave"]),
-                                     icono_de(cat["clave"]), color=fuerte, fondo=claro))
-        self.categorias.controls = chips
+        self.categorias.controls = [
+            mosaico_categoria(cat["nombre"], cat["clave"], cat["clave"] == self.categoria,
+                              partial(self.elegir_categoria, cat["clave"]))
+            for cat in self.app.config.get("categorias", [])
+        ]
 
     def elegir_categoria(self, clave: str, e=None) -> None:
         self.categoria = clave
         self._pintar_categorias()
+        self._pintar_previa()
+        self.app.page.update()
+
+    def _pintar_previa(self) -> None:
+        """La tarjeta del tablero con lo que va escrito hasta ahora."""
+        nombre = next((x["nombre"] for x in self.app.config.get("categorias", []) if x["clave"] == self.categoria),
+                      "Otro")
+        limpio = (self.campo_valor.value or "").replace("$", "").replace(" ", "").replace(".", "")
+        valor = int(limpio) if self.con_costo and limpio.isdigit() else 0
+        aviso = {
+            "titulo": (self.campo_titulo.value or "").strip() or "Tu título",
+            "categoria": self.categoria,
+            "nombre_categoria": nombre,
+            "inicio_evento": self.inicio_evento(),
+            "lugar": (self.campo_lugar.value or "").strip() or "El lugar",
+            "valor": valor,
+            "ocupados": self.actuales.valor,
+            "personas_necesarias": self.necesarias.valor,
+            "cupos_libres": self.necesarias.valor - self.actuales.valor,
+            "abierto": False,
+        }
+        self.previa.content = c.tarjeta_aviso(aviso, f.ahora(), None)
+
+    def cambio_texto(self, e=None) -> None:
+        self._pintar_previa()
         self.app.page.update()
 
     def cambiaron_personas(self, actualizar: bool = True) -> None:
@@ -203,8 +284,10 @@ class PantallaCrear(Pantalla):
             self.necesarias.poner(self.actuales.valor + 1)
         faltan = self.necesarias.valor - self.actuales.valor
         self.previa_faltan.value = f.texto_faltan(faltan)
-        self.previa_barra.controls = [c.barra_cupos(self.actuales.valor, self.necesarias.valor)]
+        self.previa_ficha.content = c.ficha(f"+{faltan}", 44)
+        self.previa_barra.controls = [c.barra_cupos(self.actuales.valor, self.necesarias.valor, alto=10)]
         if actualizar:
+            self._pintar_previa()
             self.app.page.update()
 
     def _pintar_ubicacion(self) -> None:
@@ -246,6 +329,7 @@ class PantallaCrear(Pantalla):
     def elegir_costo(self, con_costo: bool, e=None) -> None:
         self.con_costo = con_costo
         self._pintar_costo()
+        self._pintar_previa()
         self.app.page.update()
 
     def cambio_valor(self, e=None, actualizar: bool = False) -> None:
@@ -255,7 +339,10 @@ class PantallaCrear(Pantalla):
             self.previa_valor.value = "Se mostrará como: " + f.texto_valor(int(limpio))
         else:
             self.previa_valor.value = ""
-        if actualizar:
+        if e is not None:
+            self._pintar_previa()
+            self.app.page.update()
+        elif actualizar:
             self.app.page.update()
 
     def _pintar_duracion(self) -> None:
@@ -292,6 +379,7 @@ class PantallaCrear(Pantalla):
         elif isinstance(valor, date):
             self.dia = valor
         self._pintar_fecha()
+        self._pintar_previa()
         self.app.page.update()
 
     def elegir_hora(self, e=None) -> None:
@@ -309,6 +397,7 @@ class PantallaCrear(Pantalla):
         if isinstance(valor, time):
             self.hora = valor.replace(second=0, microsecond=0)
         self._pintar_fecha()
+        self._pintar_previa()
         self.app.page.update()
 
     def inicio_evento(self) -> str:
@@ -380,6 +469,7 @@ class PantallaCrear(Pantalla):
         self.lat, self.lng = lugar["lat"], lugar["lng"]
         self.aviso_lugar.visible = False
         self._pintar_ubicacion()
+        self._pintar_previa()
         self.cerrar_buscador()
 
     # ------------------------------------------------------------------ palabras inapropiadas

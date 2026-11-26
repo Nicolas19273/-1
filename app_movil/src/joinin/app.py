@@ -19,7 +19,7 @@ import flet as ft
 
 from .actualizar import FALLO, LISTO, crear_actualizador, leer_recorrido
 from .cliente import URL_DESCARGA, ClienteAPI, ErrorServidor, es_mas_nueva, ultima_version_publicada
-from .estilo import BLANCO, COLOR_PRINCIPAL, FONDO, GRIS_SUAVE, ROJO, TINTA, tema
+from .estilo import BLANCO, COLOR_PRINCIPAL, FONDO, FUENTES, GRIS_SUAVE, LETRA_TITULOS, ROJO, TINTA, tema
 from .version import VERSION
 
 SEGUNDOS_ENTRE_REFRESCOS = 20  # cada cuánto se actualiza solo lo que está en pantalla
@@ -72,16 +72,22 @@ class Pantalla:
         """Se llama sola cada cierto tiempo y al volver a esta pantalla."""
         await self.cargar()
 
-    def vista_base(self, titulo: str | None, controles: list[ft.Control], al_refrescar: Callable | None = None,
-                   **extra) -> ft.View:
+    def vista_base(self, titulo: str | ft.Control | None, controles: list[ft.Control],
+                   al_refrescar: Callable | None = None, encabezado: ft.Control | None = None, **extra) -> ft.View:
         """
         La vista con su barra de arriba. Con al_refrescar, se actualiza deslizando
         hacia abajo desde el comienzo («pull to refresh»), como en las apps del celular.
+        El encabezado (si hay) va de borde a borde, arriba de todo, y se desliza con lo demás.
         """
+        contenido = ft.Container(
+            ft.Column(controles, spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
+            padding=ft.Padding.only(left=16, right=16, top=4 if encabezado is None else 16, bottom=24),
+        )
+        partes: list[ft.Control] = ([encabezado] if encabezado is not None else []) + [contenido]
         if al_refrescar is not None:
             cuerpo: list[ft.Control] = [
                 ft.RefreshIndicator(
-                    content=ft.Column(controles, scroll=ft.ScrollMode.AUTO, expand=True, spacing=10),
+                    content=ft.Column(partes, scroll=ft.ScrollMode.AUTO, expand=True, spacing=0),
                     on_refresh=al_refrescar,
                     color=COLOR_PRINCIPAL,
                     bgcolor=BLANCO,
@@ -90,20 +96,23 @@ class Pantalla:
             ]
             desplazamiento = None
         else:
-            cuerpo, desplazamiento = controles, ft.ScrollMode.AUTO
-        texto_titulo = ft.Text(titulo or "", weight=ft.FontWeight.W_800, color=TINTA)
+            cuerpo, desplazamiento = partes, ft.ScrollMode.AUTO
+        if isinstance(titulo, str):
+            titulo = ft.Text(titulo, font_family=LETRA_TITULOS, size=24, weight=ft.FontWeight.W_800, color=TINTA)
         al_tocar_titulo = extra.pop("al_tocar_titulo", None)
         return ft.View(
             route=self.ruta,
             controls=cuerpo,
             appbar=ft.AppBar(
-                title=ft.Container(texto_titulo, on_click=al_tocar_titulo) if al_tocar_titulo else texto_titulo,
+                title=ft.Container(titulo, on_click=al_tocar_titulo) if al_tocar_titulo else titulo,
                 bgcolor=FONDO,
                 color=TINTA,
+                elevation=0,
                 actions=extra.pop("acciones", None) or [],
             ) if titulo is not None else None,
             bgcolor=FONDO,
-            padding=ft.Padding.all(16),
+            padding=ft.Padding.all(0),
+            spacing=0,
             scroll=desplazamiento,
             **extra,
         )
@@ -160,6 +169,7 @@ class AppJoinIn:
 
     async def iniciar(self) -> None:
         self.page.title = "Join In"
+        self.page.fonts = dict(FUENTES)
         self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.theme = tema()
         self.page.bgcolor = FONDO

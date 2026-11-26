@@ -10,7 +10,6 @@ from .. import componentes as c
 from .. import formato as f
 from ..app import Pantalla
 from ..estilo import BLANCO, COLOR_PRINCIPAL, ROJO, ROJO_SUAVE, TINTA
-from .tablero import chip_filtro
 
 ME_UNI, ORGANIZO = "me_uni", "organizo"
 
@@ -26,12 +25,13 @@ class PantallaBuzon(Pantalla):
         self.momento = f.ahora()
 
     def vista(self) -> ft.View:
-        self.pestanas = ft.Row(spacing=8)
+        self.pestanas = ft.Container()
         self.lista = ft.Column([c.cargando("Abriendo tu buzón…")], spacing=12)
         self._pintar_pestanas()
         return self.vista_base(
             "Mi buzón",
-            [c.suave("Aquí ves cómo van tus avisos, aunque ya no estén en el tablero."), self.pestanas, self.lista],
+            [c.suave("Aquí ves cómo van tus avisos, aunque ya no estén en el tablero.", 14), self.pestanas,
+             self.lista],
             al_refrescar=self.actualizar,
         )
 
@@ -52,12 +52,12 @@ class PantallaBuzon(Pantalla):
     def _pintar_pestanas(self) -> None:
         n_uni = len(self.datos[ME_UNI]) if self.datos else 0
         n_org = len(self.datos[ORGANIZO]) if self.datos else 0
-        self.pestanas.controls = [
-            chip_filtro(f"Me uní ({n_uni})", self.pestana == ME_UNI, partial(self.cambiar, ME_UNI),
-                        ft.Icons.GROUP, color=COLOR_PRINCIPAL),
-            chip_filtro(f"Organizo ({n_org})", self.pestana == ORGANIZO, partial(self.cambiar, ORGANIZO),
-                        ft.Icons.CAMPAIGN, color=COLOR_PRINCIPAL),
-        ]
+        me_uni, organizo = f"Me uní ({n_uni})", f"Organizo ({n_org})"
+        self.pestanas.content = c.pestanas(
+            [(me_uni, ft.Icons.GROUP, partial(self.cambiar, ME_UNI)),
+             (organizo, ft.Icons.CAMPAIGN, partial(self.cambiar, ORGANIZO))],
+            me_uni if self.pestana == ME_UNI else organizo,
+        )
 
     def cambiar(self, pestana: str, e=None) -> None:
         self.pestana = pestana
@@ -72,10 +72,12 @@ class PantallaBuzon(Pantalla):
         if not avisos:
             if self.pestana == ME_UNI:
                 vacio = c.vacio(ft.Icons.INBOX, "Todavía no te unes a nada",
-                                "Busca en el tablero un aviso que te guste y toca «Unirme».")
+                                "Busca en el tablero un aviso que te guste y toca «Unirme».",
+                                c.boton_oscuro("Ir al tablero", self.ir_al_tablero, ft.Icons.ARROW_BACK, expandir=False))
             else:
                 vacio = c.vacio(ft.Icons.CAMPAIGN, "No tienes avisos publicados",
-                                "Toca «Crear aviso» en el tablero para publicar lo que te falta.")
+                                "Publica lo que te falta y aquí verás cómo se va llenando.",
+                                c.boton_principal("Crear aviso", self.ir_a_crear, ft.Icons.ADD, expandir=False))
             self.lista.controls = [vacio]
             return
         self.lista.controls = [
@@ -86,10 +88,18 @@ class PantallaBuzon(Pantalla):
     def _estado(self, aviso: dict) -> ft.Control:
         principal, secundario = f.estado_en_buzon(aviso, self.momento)
         if aviso.get("cancelado"):
-            return c.nota(principal, secundario, color=ROJO, fondo=ROJO_SUAVE)
+            return c.nota(principal, secundario, color=ROJO, fondo=ROJO_SUAVE, icono=ft.Icons.EVENT_BUSY)
         if aviso["cupos_libres"] <= 0:
-            return c.nota(principal, secundario, color=BLANCO, fondo=COLOR_PRINCIPAL)
-        return c.nota(principal, secundario, color=TINTA)
+            return c.nota(principal, secundario, color=BLANCO, fondo=COLOR_PRINCIPAL, icono=ft.Icons.CHECK_CIRCLE)
+        return c.nota(principal, secundario, color=TINTA, fondo="#F1F3EE", icono=ft.Icons.INFO_OUTLINE)
+
+    async def ir_al_tablero(self, e=None) -> None:
+        await self.app.volver()
+
+    async def ir_a_crear(self, e=None) -> None:
+        from .crear import PantallaCrear
+
+        await self.app.cambiar(PantallaCrear(self.app))
 
     async def abrir(self, aviso_id: int, e=None) -> None:
         from .aviso import PantallaAviso
