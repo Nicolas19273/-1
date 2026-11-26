@@ -9,7 +9,7 @@ import flet as ft
 
 from .. import componentes as c
 from ..app import Pantalla, ToquesSecretos
-from ..estilo import BLANCO, FONDO, GRIS_SUAVE
+from ..estilo import BLANCO, FONDO, GRIS_SUAVE, TINTA
 from .inicio import logo
 
 
@@ -32,17 +32,32 @@ class PantallaIngreso(Pantalla):
             padding=ft.Padding.all(18),
         )
         self.pintar()
+        marca = ft.Column(
+            [
+                ft.Container(logo(80), on_click=self.secreto.tocar),
+                ft.Text("Join In", size=36, weight=ft.FontWeight.W_900, color=TINTA),
+                c.texto("Arma tu panorama con estudiantes de la ULagos: únete a un partido, una junta de "
+                        "estudio o una salida, o publica lo que te falta.", 15, text_align=ft.TextAlign.CENTER),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=10,
+        )
+        # Esta pantalla no tiene barra de arriba: SafeArea evita que el logo y el título
+        # queden debajo de la barra de estado del celular (la hora, la batería).
+        # Todo va centrado en la pantalla, con el nombre de la app bien a la vista.
         return ft.View(
             route=self.ruta,
             bgcolor=FONDO,
-            padding=ft.Padding.all(20),
+            padding=ft.Padding.symmetric(horizontal=20, vertical=12),
             scroll=ft.ScrollMode.AUTO,
+            vertical_alignment=ft.MainAxisAlignment.CENTER,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             controls=[
-                ft.Row([ft.Container(logo(56), on_click=self.secreto.tocar), c.titulo("Join In", 30)], spacing=12),
-                c.texto("Arma tu panorama con estudiantes de la ULagos: únete a un partido, una junta de estudio "
-                        "o una salida, o publica lo que te falta.", 15),
-                self.tarjeta,
+                ft.SafeArea(
+                    content=ft.Column([marca, self.tarjeta], spacing=28,
+                                      horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
+                    minimum_padding=ft.Padding.symmetric(vertical=16),
+                ),
             ],
         )
 
@@ -57,7 +72,7 @@ class PantallaIngreso(Pantalla):
                 hint_text=f"nombre@{dominio}",
                 value=self.correo,
                 keyboard_type=ft.KeyboardType.EMAIL,
-                autofocus=True,
+                autofocus=bool(self.correo),  # al abrir la app, sin teclado: primero se ve todo
                 on_submit=self.enviar,
             )
             controles = [
