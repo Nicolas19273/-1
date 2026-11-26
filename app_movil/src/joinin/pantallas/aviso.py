@@ -12,6 +12,7 @@ import flet as ft
 from .. import componentes as c
 from .. import formato as f
 from ..app import Pantalla
+from ..cliente import URL_DESCARGA
 from ..estilo import AMARILLO, BLANCO, COLOR_PRINCIPAL, GRIS, GRIS_SUAVE, ROJO, ROJO_SUAVE, TINTA
 
 
@@ -54,7 +55,8 @@ class PantallaAviso(Pantalla):
         return self.vista_base(
             "Aviso",
             [self.cuerpo, self.seccion_comentarios],
-            acciones=[ft.IconButton(ft.Icons.REFRESH, tooltip="Actualizar", on_click=self.actualizar)],
+            al_refrescar=self.actualizar,
+            acciones=[ft.IconButton(ft.Icons.SHARE, tooltip="Compartir", on_click=self.compartir)],
         )
 
     # ------------------------------------------------------------------ datos
@@ -108,8 +110,16 @@ class PantallaAviso(Pantalla):
                         url=f.url_como_llegar(a),
                         style=ft.ButtonStyle(bgcolor=BLANCO, color=COLOR_PRINCIPAL,
                                              shape=ft.RoundedRectangleBorder(radius=12)),
-                    )
+                    ),
                 ]
+                + ([ft.Button(
+                    "Invitar",
+                    icon=ft.Icons.SHARE,
+                    on_click=self.compartir,
+                    style=ft.ButtonStyle(bgcolor=BLANCO, color=COLOR_PRINCIPAL,
+                                         shape=ft.RoundedRectangleBorder(radius=12)),
+                )] if a["abierto"] else []),
+                wrap=True,
             ),
             c.tarjeta([c.resumen_cupos(a), c.suave(f.texto_quienes(a))]),
         ]
@@ -190,6 +200,12 @@ class PantallaAviso(Pantalla):
         return ft.Row(fila, vertical_alignment=ft.CrossAxisAlignment.START, spacing=10)
 
     # ------------------------------------------------------------------ acciones
+
+    async def compartir(self, e=None) -> None:
+        if self.aviso is None:
+            return
+        await self.app.compartir(f.texto_para_compartir(self.aviso, self.momento, URL_DESCARGA),
+                                 asunto=self.aviso["titulo"])
 
     async def unirse(self, e=None) -> None:
         r = await self.app.llamar(self.api.unirse, self.aviso_id)

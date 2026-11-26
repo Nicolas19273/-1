@@ -196,6 +196,12 @@ REVISADOS = 0
 def revisar_controles(pagina) -> None:
     """Con Flet real: las mismas validaciones que Flet hace antes de dibujar la pantalla."""
     global REVISADOS
+    for raiz in [*pagina.views, *pagina.abiertos]:
+        for x in recorrer(raiz):
+            if type(x).__name__ == "Row" and getattr(x, "scroll", None) is not None:
+                assert str(x.scroll).endswith("HIDDEN") or x.scroll == "hidden", (
+                    "una fila que se desliza de lado no debe mostrar barra (tapa los textos)"
+                )
     if not FLET_REAL:
         return
     for raiz in [*pagina.views, *pagina.abiertos]:
@@ -261,6 +267,14 @@ async def escribir(pagina, etiqueta: str, valor: str, enviar: bool = False):
             await _disparar(getattr(x, nombre), x)
 
 
+async def deslizar_para_actualizar(pagina):
+    """Como tirar la pantalla hacia abajo desde arriba."""
+    indicadores = [x for x in recorrer(pagina.views[-1]) if type(x).__name__ == "RefreshIndicator"]
+    assert indicadores, "esta pantalla no se actualiza deslizando"
+    await _disparar(indicadores[0].on_refresh, indicadores[0])
+    revisar_controles(pagina)
+
+
 def ultimo_aviso(pagina) -> str:
     return pagina.avisos[-1] if pagina.avisos else ""
 
@@ -269,11 +283,21 @@ def nombre_pantalla(app) -> str:
     return type(app.actual).__name__
 
 
+class CompartidorFalso:
+    """Como ft.Share: guarda lo que la app quiso compartir."""
+
+    def __init__(self):
+        self.textos: list[tuple[str, str | None]] = []
+
+    async def share_text(self, texto, subject=None, **k):
+        self.textos.append((texto, subject))
+
+
 async def celular(token_inicial: str | None = None):
     pagina, almacen = PaginaFalsa(), AlmacenFalso()
     if token_inicial:
         almacen.datos[Almacen.CLAVE_TOKEN] = token_inicial
-    app = AppJoinIn(pagina, almacen, url=BASE)
+    app = AppJoinIn(pagina, almacen, url=BASE, compartidor=CompartidorFalso())
     await app.iniciar()
     revisar_controles(pagina)
     return app, pagina
@@ -407,6 +431,10 @@ async def prueba():
     await escribir(pa, "Título", "Basquetbol 3 vs 3")
     await tocar(pa, "Publicar aviso")
     assert hay(pa, "¡Aviso publicado!") and hay(pa, "48 horas")
+    await tocar(pa, "Compartir")
+    texto, asunto = ana.compartidor.textos[-1]
+    assert asunto == "Basquetbol 3 vs 3" and "«Basquetbol 3 vs 3»" in texto and "Faltan 5 personas" in texto
+    assert "$2.000 por persona" in texto and "releases/latest/download/join-in.apk" in texto and pa.abiertos
     await tocar(pa, "Ver mi aviso")
     assert nombre_pantalla(ana) == "PantallaAviso" and len(pa.views) == 2 and not pa.abiertos
     assert hay(pa, "Este aviso es tuyo") and hay(pa, "Basquetbol 3 vs 3") and hay(pa, "$2.000 por persona")
@@ -427,6 +455,10 @@ async def prueba():
     await tocar(pb, "Todos (1)")
     await tocar(pb, "Basquetbol 3 vs 3")
     assert nombre_pantalla(beto) == "PantallaAviso" and hay(pb, "Unirme")
+    await tocar(pb, "Invitar")
+    assert beto.compartidor.textos[-1][0].startswith("¡Nos falta gente! Básquetbol: «Basquetbol 3 vs 3»")
+    await tocar_icono(pb, "Compartir")
+    assert len(beto.compartidor.textos) == 2
     await tocar(pb, "Unirme")
     assert ultimo_aviso(pb).startswith("¡Listo! Te uniste") and hay(pb, "Ya estás dentro")
     assert hay(pb, "Faltan 4 personas") and hay(pb, "Se unió Beto Soto")
@@ -466,7 +498,11 @@ async def prueba():
     assert nombre_pantalla(beto) == "PantallaBuzon" and hay(pb, "Me uní (0)")
     print("OK: unirse, comentar, denunciar, buzón y salirse")
 
-    # 5) Ana ve el comentario, comenta como organizadora y borra su comentario
+    # 5) Ana desliza el tablero hacia abajo y ve que alguien se unió y salió
+    assert ana.actual.filtros.scroll == ft.ScrollMode.HIDDEN  # el error de la barra sobre las categorías
+    await deslizar_para_actualizar(pa)
+    assert hay(pa, "Faltan 5 personas")
+    # Ana ve el comentario, comenta como organizadora y borra su comentario
     await tocar(pa, "Basquetbol 3 vs 3")
     assert hay(pa, "Beto Soto") and hay(pa, "¿Llevo pelota?")
     await escribir(pa, "Escribe un comentario", "Sí, porfa")
@@ -609,7 +645,30 @@ async def prueba():
     assert nombre_pantalla(otro) == "PantallaIngreso" and "celular" in ultimo_aviso(po).lower()
     print("OK: cerrar sesión, volver a entrar y un correo por celular")
 
-    # 10) Textos de fechas y estados (los mismos que tenía la página)
+    # 10) Aviso de versión nueva (la app se instala desde GitHub, no desde Play Store)
+    from joinin import app as nucleo
+    from joinin.cliente import URL_DESCARGA, es_mas_nueva
+
+    assert es_mas_nueva("1.0.10", "1.0.9") and not es_mas_nueva("1.0.9", "1.0.9") and not es_mas_nueva("", "1.0.9")
+    assert nombre_pantalla(ana) == "PantallaTablero" and not hay(pa, "Hay una versión nueva")
+    await nucleo.AppJoinIn.revisar_version(ana, lambda: "1.0.99")  # versión «dev»: no pregunta
+    assert ana.version_nueva is None
+    nucleo.VERSION = "1.0.5"
+    try:
+        await ana.revisar_version(lambda: "1.0.5")
+        assert ana.version_nueva is None and not hay(pa, "Hay una versión nueva")
+        await ana.revisar_version(lambda: (_ for _ in ()).throw(OSError("sin internet")))
+        assert ana.version_nueva is None
+        await ana.revisar_version(lambda: "1.0.6")
+        assert ana.version_nueva == "1.0.6" and hay(pa, "Hay una versión nueva de Join In (1.0.6)")
+        assert any(getattr(x, "url", None) == URL_DESCARGA for x in recorrer(pa.views[-1]))
+        await deslizar_para_actualizar(pa)  # sigue ahí después de actualizar
+        assert hay(pa, "Hay una versión nueva de Join In (1.0.6)")
+    finally:
+        nucleo.VERSION = "dev"
+    print("OK: compartir avisos, deslizar para actualizar y aviso de versión nueva")
+
+    # 11) Textos de fechas y estados (los mismos que tenía la página)
     ref = datetime(2026, 11, 26, 10, 0, tzinfo=formato.ZONA_HORARIA)
     assert formato.texto_fecha_evento(ref.replace(hour=20), ref) == "Hoy, 20:00"
     assert formato.texto_fecha_evento(ref + timedelta(days=1), ref) == "Mañana, 10:00"

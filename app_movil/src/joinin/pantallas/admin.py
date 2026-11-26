@@ -154,7 +154,7 @@ class PantallaAdmin(PantallaAdminBase):
                 ft.Row([c.boton_peligro("Cerrar la administración en todos los celulares", self.preguntar_salir_todos,
                                         ft.Icons.PHONELINK_LOCK)]),
             ],
-            acciones=[ft.IconButton(ft.Icons.REFRESH, tooltip="Actualizar", on_click=self.actualizar)],
+            al_refrescar=self.actualizar,
         )
 
     async def cargar(self) -> None:
@@ -246,7 +246,7 @@ class PantallaAdminDenuncias(PantallaAdminBase):
     def vista(self) -> ft.View:
         self.lista = ft.Column([c.cargando()], spacing=12)
         return self.vista_base("Denuncias", [c.suave("Avisos denunciados, del más denunciado al menos."), self.lista],
-                               acciones=[ft.IconButton(ft.Icons.REFRESH, tooltip="Actualizar", on_click=self.actualizar)])
+                               al_refrescar=self.actualizar)
 
     async def actualizar(self, e=None) -> None:
         await self.cargar()
@@ -455,7 +455,7 @@ class PantallaAdminBloqueados(PantallaAdminBase):
             "Bloqueados",
             [self.explicacion, ft.Row([c.boton_peligro("Borrar registro", self.preguntar_borrar,
                                                        ft.Icons.DELETE_SWEEP)]), self.lista],
-            acciones=[ft.IconButton(ft.Icons.REFRESH, tooltip="Actualizar", on_click=self.actualizar)],
+            al_refrescar=self.actualizar,
         )
 
     async def actualizar(self, e=None) -> None:
@@ -514,7 +514,7 @@ class PantallaAdminAvisos(PantallaAdminBase):
         self.momento = f.ahora()
 
     def vista(self) -> ft.View:
-        self.filtros = ft.Row(scroll=ft.ScrollMode.AUTO, spacing=8)
+        self.filtros = ft.Row(scroll=ft.ScrollMode.HIDDEN, spacing=8)
         self.lista = ft.Column([c.cargando()], spacing=10)
         self._pintar_filtros()
         return self.vista_base(
@@ -533,7 +533,7 @@ class PantallaAdminAvisos(PantallaAdminBase):
                 self.filtros,
                 self.lista,
             ],
-            acciones=[ft.IconButton(ft.Icons.REFRESH, tooltip="Actualizar", on_click=self.actualizar)],
+            al_refrescar=self.actualizar,
         )
 
     async def actualizar(self, e=None) -> None:
@@ -666,7 +666,7 @@ class PantallaAdminCorreos(PantallaAdminBase):
                 self.busqueda,
                 self.lista,
             ],
-            acciones=[ft.IconButton(ft.Icons.REFRESH, tooltip="Actualizar", on_click=self.actualizar)],
+            al_refrescar=self.actualizar,
         )
 
     async def actualizar(self, e=None) -> None:

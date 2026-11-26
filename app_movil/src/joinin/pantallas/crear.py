@@ -10,6 +10,7 @@ import flet as ft
 from .. import componentes as c
 from .. import formato as f
 from ..app import Pantalla
+from ..cliente import URL_DESCARGA
 from ..estilo import BLANCO, COLOR_PRINCIPAL, GRIS, GRIS_SUAVE, TINTA, colores_de, icono_de
 from .tablero import chip_filtro
 
@@ -439,16 +440,20 @@ class PantallaCrear(Pantalla):
             title=ft.Text("¡Aviso publicado!", weight=ft.FontWeight.W_800),
             content=ft.Text(
                 f"«{aviso['titulo']}» ya está en el tablero. Lo verás en tu buzón durante "
-                f"{aviso['duracion_horas']} horas, aunque se llene.",
+                f"{aviso['duracion_horas']} horas, aunque se llene. Compártelo para que se llene antes.",
                 color=TINTA,
             ),
             actions=[
+                ft.TextButton("Compartir", icon=ft.Icons.SHARE, on_click=partial(self.compartir, aviso)),
                 ft.TextButton("Volver al tablero", on_click=self.volver_al_tablero),
                 ft.TextButton("Ver mi aviso", on_click=partial(self.ver_aviso, aviso["id"]),
                               style=ft.ButtonStyle(color=COLOR_PRINCIPAL)),
             ],
         )
         self.app.page.show_dialog(self.dialogo_publicado)
+
+    async def compartir(self, aviso: dict, e=None) -> None:
+        await self.app.compartir(f.texto_para_compartir(aviso, f.ahora(), URL_DESCARGA), asunto=aviso["titulo"])
 
     async def volver_al_tablero(self, e=None) -> None:
         self.app.cerrar_dialogo(self.dialogo_publicado)

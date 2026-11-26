@@ -9,9 +9,15 @@ import flet as ft
 from .. import componentes as c
 from .. import formato as f
 from ..app import Pantalla
+from ..cliente import URL_DESCARGA
+from ..version import VERSION
 from ..estilo import AMARILLO, BLANCO, COLOR_PRINCIPAL, GRIS_SUAVE, TINTA, colores_de, icono_de
 
 TODAS = ""
+
+
+def texto_version() -> str:
+    return "(versión de prueba)" if VERSION == "dev" else f"versión {VERSION}"
 
 
 def chip_filtro(etiqueta: str, elegido: bool, al_tocar, icono=None, color: str = TINTA,
@@ -45,9 +51,12 @@ class PantallaTablero(Pantalla):
 
     def vista(self) -> ft.View:
         self.saludo = c.titulo(self._texto_saludo(), 24)
-        self.filtros = ft.Row(scroll=ft.ScrollMode.AUTO, spacing=8)
+        # Sin barra de desplazamiento: en el celular se pintaba encima de los nombres.
+        self.filtros = ft.Row(scroll=ft.ScrollMode.HIDDEN, spacing=8)
+        self.banner = ft.Container(visible=False)
         self.lista = ft.Column([c.cargando("Buscando avisos…")], spacing=12)
         self._pintar_filtros()
+        self.mostrar_version_nueva()
         menu = ft.PopupMenuButton(
             icon=ft.Icons.ACCOUNT_CIRCLE,
             tooltip="Tu cuenta",
@@ -57,19 +66,22 @@ class PantallaTablero(Pantalla):
                 ft.PopupMenuItem(icon=ft.Icons.ADMIN_PANEL_SETTINGS, content="Administración", on_click=self.ir_a_admin),
                 ft.PopupMenuItem(),
                 ft.PopupMenuItem(icon=ft.Icons.LOGOUT, content="Cerrar sesión", on_click=self.preguntar_salir),
+                ft.PopupMenuItem(icon=ft.Icons.INFO_OUTLINE, content=f"Join In {texto_version()}"),
             ],
         )
         return self.vista_base(
             "Join In",
             [
                 self.saludo,
-                c.suave("Estos son los avisos abiertos ahora. Toca uno para ver los detalles y unirte."),
+                c.suave("Estos son los avisos abiertos ahora. Toca uno para ver los detalles y unirte. "
+                        "Desliza hacia abajo para actualizar."),
+                self.banner,
                 self.filtros,
                 self.lista,
                 ft.Container(height=80),  # espacio para que el botón flotante no tape la última tarjeta
             ],
+            al_refrescar=self.actualizar,
             acciones=[
-                ft.IconButton(ft.Icons.REFRESH, tooltip="Actualizar", on_click=self.actualizar),
                 ft.IconButton(ft.Icons.INBOX, tooltip="Mi buzón", on_click=self.ir_al_buzon),
                 menu,
             ],
@@ -80,6 +92,33 @@ class PantallaTablero(Pantalla):
                 foreground_color=TINTA,
                 on_click=self.ir_a_crear,
             ),
+        )
+
+    def mostrar_version_nueva(self) -> None:
+        """Una tarjeta arriba si hay un APK más nuevo para descargar."""
+        nueva = self.app.version_nueva
+        self.banner.visible = bool(nueva)
+        if not nueva:
+            return
+        self.banner.content = c.tarjeta(
+            [
+                ft.Row(
+                    [
+                        ft.Icon(ft.Icons.SYSTEM_UPDATE, color=TINTA),
+                        ft.Column(
+                            [c.texto(f"Hay una versión nueva de Join In ({nueva})", 15, ft.FontWeight.W_800),
+                             c.texto("Descárgala e instálala encima de esta: no pierdes nada.", 13)],
+                            spacing=2, expand=True, tight=True,
+                        ),
+                    ],
+                    spacing=12,
+                ),
+                ft.Row([ft.Button("Descargar", icon=ft.Icons.DOWNLOAD, url=URL_DESCARGA,
+                                  style=ft.ButtonStyle(bgcolor=TINTA, color=BLANCO,
+                                                       shape=ft.RoundedRectangleBorder(radius=12)))]),
+            ],
+            color=AMARILLO,
+            borde=AMARILLO,
         )
 
     def _texto_saludo(self) -> str:
@@ -100,6 +139,7 @@ class PantallaTablero(Pantalla):
         self.momento = f.leer_fecha(r["ahora"]) or f.ahora()
         self.avisos = r["avisos"]
         self.saludo.value = self._texto_saludo()
+        self.mostrar_version_nueva()
         self._pintar_filtros()
         self._pintar_lista()
 

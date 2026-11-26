@@ -168,3 +168,18 @@ def url_como_llegar(aviso: dict) -> str:
     else:
         destino = aviso.get("lugar", "")
     return "https://www.google.com/maps/dir/?api=1&destination=" + quote_plus(destino)
+
+
+def texto_para_compartir(aviso: dict, momento: datetime, enlace: str) -> str:
+    """El mensaje para WhatsApp u otra app: qué es, cuándo, dónde, cuántos faltan y cómo unirse."""
+    inicio = leer_fecha(aviso["inicio_evento"])
+    lineas = [
+        f"¡Nos falta gente! {aviso['nombre_categoria']}: «{aviso['titulo']}»",
+        f"{texto_fecha_evento(inicio, momento)} · {aviso['lugar']}",
+    ]
+    detalle = texto_faltan(aviso["cupos_libres"])
+    if aviso.get("valor") is not None:
+        detalle += " · " + texto_valor(aviso["valor"])
+    lineas.append(detalle)
+    lineas.append(f"Únete desde la app Join In (estudiantes ULagos): {enlace}")
+    return "\n".join(lineas)

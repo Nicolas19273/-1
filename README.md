@@ -232,9 +232,12 @@ Los avisos no se pierden.
      derecha del tablero) → **Cerrar sesión**, y se entra desde el nuevo.
    - **Si se perdió el celular** (o se desinstaló la app), la administración
      **libera el correo** desde **Correos en uso**.
-1. **Tablero:** los avisos abiertos, con filtros por categoría. Cada tarjeta
-   muestra la categoría, el valor, cuándo, dónde, cuántos faltan (con una
-   barra de cupos) y cuánto le queda abierto. Se actualiza solo.
+1. **Tablero:** los avisos abiertos, con filtros por categoría (se deslizan
+   de lado). Cada tarjeta muestra la categoría, el valor, cuándo, dónde,
+   cuántos faltan (con una barra de cupos) y cuánto le queda abierto. Se
+   actualiza solo cada 20 segundos, o al deslizar la pantalla hacia abajo.
+   Si hay una versión nueva de la app, el tablero lo avisa con un botón para
+   descargarla (la versión instalada aparece en el menú de la cuenta).
 2. **Crear aviso** (botón amarillo): categoría, título, cuántos son y cuántos
    necesitan en total (con vista previa de los cupos), lugar, fecha y hora,
    valor por persona y si el aviso dura **24 o 48 horas**.
@@ -249,6 +252,9 @@ Los avisos no se pierden.
    - **Unirme** anota con un toque; **Salirme** libera el cupo hasta que
      empieza el evento (si el aviso sigue en plazo, vuelve al tablero).
    - **Cómo llegar** abre Google Maps con las indicaciones.
+   - **Invitar** (o el ícono de compartir) abre el menú del celular para
+     mandar el aviso por WhatsApp u otra app, con el enlace para bajar Join In.
+     Al publicar un aviso también aparece **Compartir**.
    - **Comentarios:** preguntas cortas como "¿se paga la cancha?" (con el
      filtro de palabras). Cada uno puede borrar los suyos; la
      administración, cualquiera.

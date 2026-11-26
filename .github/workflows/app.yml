@@ -76,6 +76,10 @@ jobs:
             echo "::warning::Sin el secreto ANDROID_KEYSTORE_BASE64: el APK se firma con una clave de prueba distinta en cada versión."
           fi
 
+      - name: Anotar la versión en la app
+        # La app la muestra en el menú de la cuenta y la compara con la última de Releases.
+        run: echo "VERSION = \"$VERSION\"" > app_movil/src/joinin/version.py
+
       - name: Gradle de a una tarea a la vez
         # serious_python descarga Python para cada tipo de procesador (ABI) y anota
         # las descargas en un mismo archivo: en paralelo ese archivo se corrompe.

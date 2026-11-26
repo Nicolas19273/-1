@@ -32,7 +32,7 @@ class PantallaBuzon(Pantalla):
         return self.vista_base(
             "Mi buzón",
             [c.suave("Aquí ves cómo van tus avisos, aunque ya no estén en el tablero."), self.pestanas, self.lista],
-            acciones=[ft.IconButton(ft.Icons.REFRESH, tooltip="Actualizar", on_click=self.actualizar)],
+            al_refrescar=self.actualizar,
         )
 
     async def cargar(self) -> None:

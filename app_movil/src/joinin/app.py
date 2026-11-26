@@ -15,8 +15,9 @@ from typing import Any, Callable
 
 import flet as ft
 
-from .cliente import ClienteAPI, ErrorServidor
-from .estilo import BLANCO, FONDO, ROJO, TINTA, tema
+from .cliente import ClienteAPI, ErrorServidor, es_mas_nueva, ultima_version_publicada
+from .estilo import BLANCO, COLOR_PRINCIPAL, FONDO, ROJO, TINTA, tema
+from .version import VERSION
 
 SEGUNDOS_ENTRE_REFRESCOS = 20  # cada cuánto se actualiza solo lo que está en pantalla
 _FORMATO_TOKEN = re.compile(r"^[0-9a-f]{32}$")
@@ -68,10 +69,28 @@ class Pantalla:
         """Se llama sola cada cierto tiempo y al volver a esta pantalla."""
         await self.cargar()
 
-    def vista_base(self, titulo: str | None, controles: list[ft.Control], **extra) -> ft.View:
+    def vista_base(self, titulo: str | None, controles: list[ft.Control], al_refrescar: Callable | None = None,
+                   **extra) -> ft.View:
+        """
+        La vista con su barra de arriba. Con al_refrescar, se actualiza deslizando
+        hacia abajo desde el comienzo («pull to refresh»), como en las apps del celular.
+        """
+        if al_refrescar is not None:
+            cuerpo: list[ft.Control] = [
+                ft.RefreshIndicator(
+                    content=ft.Column(controles, scroll=ft.ScrollMode.AUTO, expand=True, spacing=10),
+                    on_refresh=al_refrescar,
+                    color=COLOR_PRINCIPAL,
+                    bgcolor=BLANCO,
+                    expand=True,
+                )
+            ]
+            desplazamiento = None
+        else:
+            cuerpo, desplazamiento = controles, ft.ScrollMode.AUTO
         return ft.View(
             route=self.ruta,
-            controls=controles,
+            controls=cuerpo,
             appbar=ft.AppBar(
                 title=ft.Text(titulo or "", weight=ft.FontWeight.W_800, color=TINTA),
                 bgcolor=FONDO,
@@ -80,16 +99,18 @@ class Pantalla:
             ) if titulo is not None else None,
             bgcolor=FONDO,
             padding=ft.Padding.all(16),
-            scroll=ft.ScrollMode.AUTO,
+            scroll=desplazamiento,
             **extra,
         )
 
 
 class AppJoinIn:
-    def __init__(self, page: ft.Page, almacen: Any, url: str | None = None):
+    def __init__(self, page: ft.Page, almacen: Any, url: str | None = None, compartidor: Any = None):
         self.page = page
         self.almacen = almacen
         self.url = url
+        self.compartidor = compartidor  # ft.Share(): abre el menú de compartir del celular
+        self.version_nueva: str | None = None  # si en GitHub hay un APK más nuevo que este
         self.api: ClienteAPI | None = None
         self.config: dict = {}
         self.nombre = ""
@@ -122,6 +143,7 @@ class AppJoinIn:
         if yo is None:
             return False
         self.es_admin = bool(yo.get("es_admin"))
+        self.page.run_task(self.revisar_version)
         if yo.get("ingresado"):
             self.nombre = yo.get("nombre", "")
             await self.ir_al_tablero()
@@ -186,6 +208,33 @@ class AppJoinIn:
                 self.page.update()
             except Exception as error:  # un fallo puntual no debe cerrar la app
                 print(f"[refresco] {error!r}", flush=True)
+
+    # ------------------------------------------------------------------ versión y compartir
+
+    async def revisar_version(self, buscar: Callable[[], str | None] = ultima_version_publicada) -> None:
+        """Si en GitHub hay un APK más nuevo, el tablero lo avisa (la app no está en Play Store)."""
+        if VERSION == "dev":
+            return
+        try:
+            publicada = await asyncio.to_thread(buscar)
+        except Exception:
+            return
+        if publicada and es_mas_nueva(publicada, VERSION):
+            self.version_nueva = publicada
+            mostrar = getattr(self.actual, "mostrar_version_nueva", None)
+            if mostrar is not None:
+                mostrar()
+                self.page.update()
+
+    async def compartir(self, texto: str, asunto: str | None = None) -> None:
+        """Abre el menú de compartir del celular (WhatsApp, Instagram, correo…)."""
+        if self.compartidor is None:
+            return
+        try:
+            await self.compartidor.share_text(texto, subject=asunto)
+        except Exception as error:
+            print(f"[compartir] {error!r}", flush=True)
+            self.avisar("No se pudo abrir el menú para compartir.", error=True)
 
     # ------------------------------------------------------------------ mensajes
 
@@ -258,6 +307,6 @@ class AppJoinIn:
 
 
 async def iniciar_app(page: ft.Page) -> None:
-    app = AppJoinIn(page, Almacen())
+    app = AppJoinIn(page, Almacen(), compartidor=ft.Share())
     await app.iniciar()
     page.run_task(app.refrescar_periodicamente)

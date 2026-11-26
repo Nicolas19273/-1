@@ -23,6 +23,11 @@ SEGUNDOS_ESPERA = 75
 SIN_CONEXION = "No pudimos conectarnos con Join In. Revisa tu internet e intenta de nuevo."
 
 
+# El APK más nuevo (lo publica GitHub Actions en Releases) y dónde preguntar cuál es.
+URL_DESCARGA = "https://github.com/Nicolas19273/-1/releases/latest/download/join-in.apk"
+URL_ULTIMA_VERSION = "https://api.github.com/repos/Nicolas19273/-1/releases/latest"
+
+
 class ErrorServidor(Exception):
     """Un error con el mensaje listo para mostrar. estado: código HTTP (0 = sin conexión)."""
 
@@ -209,3 +214,28 @@ class ClienteAPI:
 
     def admin_liberar_correo(self, correo: str) -> dict:
         return self._post("/api/admin/correos/liberar", {"correo": correo})
+
+
+# ------------------------------------------------------------------ versiones
+
+
+def _numeros(version: str) -> tuple[int, ...]:
+    """'app-v1.0.12' -> (1, 0, 12)"""
+    import re
+
+    return tuple(int(n) for n in re.findall(r"\d+", version or ""))
+
+
+def es_mas_nueva(publicada: str, actual: str) -> bool:
+    return bool(_numeros(publicada)) and _numeros(publicada) > _numeros(actual)
+
+
+def ultima_version_publicada(espera: float = 10) -> str | None:
+    """La versión del último APK en GitHub (por ejemplo '1.0.12'), o None si no se sabe."""
+    pedido = urllib.request.Request(
+        URL_ULTIMA_VERSION, headers={"Accept": "application/vnd.github+json", "User-Agent": "JoinIn-App"}
+    )
+    with urllib.request.urlopen(pedido, timeout=espera, context=_contexto_ssl()) as respuesta:
+        etiqueta = json.loads(respuesta.read()).get("tag_name") or ""
+    numeros = _numeros(etiqueta)
+    return ".".join(str(n) for n in numeros) if numeros else None
