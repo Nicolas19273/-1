@@ -113,8 +113,16 @@ jobs:
               --build-number "${{ github.run_number }}" --build-version "$VERSION" \
               "${FIRMA[@]}"
           }
-          # Maven Central a veces responde «429 Too Many Requests»: se reintenta después de una pausa.
-          construir || { echo "::warning::Falló el primer intento; reintento en 90 s."; sleep 90; construir; }
+          # Maven Central a veces responde «429 Too Many Requests» a los servidores de GitHub:
+          # se reintenta con pausas cada vez más largas.
+          for espera in 0 120 300; do
+            if [ "$espera" -gt 0 ]; then
+              echo "::warning::Falló el intento anterior; reintento en $espera s."
+              sleep "$espera"
+            fi
+            if construir; then exit 0; fi
+          done
+          exit 1
 
       - name: Juntar los APK
         run: |
