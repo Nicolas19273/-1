@@ -145,12 +145,17 @@ jobs:
     name: Abrir la app en un emulador de Android
     needs: apk
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: join-in-apk
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Servidor local y fotos (para el recorrido de pantallas)
+        run: pip install -r requirements.txt requests pillow
       - name: Activar KVM (emulador rápido)
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -162,6 +167,7 @@ jobs:
           api-level: 34
           arch: x86_64
           target: google_apis
+          profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: bash app_movil/pruebas/emulador.sh join-in-x86_64.apk emulador ${{ github.ref == 'refs/heads/main' && 'ingreso' || '' }}

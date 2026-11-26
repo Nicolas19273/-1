@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 import flet as ft
 
-from .actualizar import FALLO, LISTO, crear_actualizador
+from .actualizar import FALLO, LISTO, crear_actualizador, leer_recorrido
 from .cliente import URL_DESCARGA, ClienteAPI, ErrorServidor, es_mas_nueva, ultima_version_publicada
 from .estilo import BLANCO, COLOR_PRINCIPAL, FONDO, GRIS_SUAVE, ROJO, TINTA, tema
 from .version import VERSION
@@ -145,6 +145,7 @@ class AppJoinIn:
         self.compartidor = compartidor  # ft.Share(): abre el menú de compartir del celular
         self.enlaces = enlaces  # ft.UrlLauncher(): abre un enlace en el navegador
         self.actualizador = actualizador  # ActualizadorAndroid, o None fuera de Android
+        self.token_fijo: str | None = None  # solo en el recorrido de capturas del emulador
         self.version_nueva: str | None = None  # si en GitHub hay un APK más nuevo que este
         self.api: ClienteAPI | None = None
         self.config: dict = {}
@@ -162,7 +163,7 @@ class AppJoinIn:
         self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.theme = tema()
         self.page.bgcolor = FONDO
-        token = await self.almacen.token()
+        token = self.token_fijo or await self.almacen.token()
         self.api = ClienteAPI(token, self.url)
         from .pantallas.inicio import PantallaConectando
 
@@ -457,6 +458,14 @@ class AppJoinIn:
 async def iniciar_app(page: ft.Page) -> None:
     app = AppJoinIn(page, Almacen(), compartidor=ft.Share(), enlaces=ft.UrlLauncher(),
                     actualizador=crear_actualizador())
+    recorrido = leer_recorrido(app.actualizador)  # solo en la prueba del emulador
+    if recorrido:
+        app.url, app.token_fijo = recorrido["servidor"], recorrido["token"]
     await app.iniciar()
     page.run_task(app.refrescar_periodicamente)
-    page.run_task(app.probar_actualizador)
+    if recorrido:
+        from .recorrido import recorrer
+
+        page.run_task(recorrer, app)
+    else:
+        page.run_task(app.probar_actualizador)

@@ -74,6 +74,10 @@ class ActualizadorAndroid:
         self.Intent = autoclass("android.content.Intent")
         self.Uri = autoclass("android.net.Uri")
 
+    def carpeta(self) -> str:
+        """La carpeta propia de la app en el almacenamiento (adb puede dejar archivos ahí)."""
+        return str(self.actividad.getExternalFilesDir(None).getAbsolutePath())
+
     def hay_prueba(self) -> bool:
         File = self._clase("java.io.File")
         archivo = File(self.actividad.getExternalFilesDir(None), ARCHIVO_PRUEBA)
@@ -155,3 +159,28 @@ class ActualizadorAndroid:
         intento.setDataAndType(uri, MIME_APK)
         intento.addFlags(self.Intent.FLAG_GRANT_READ_URI_PERMISSION | self.Intent.FLAG_ACTIVITY_NEW_TASK)
         self.actividad.startActivity(intento)
+
+
+ARCHIVO_RECORRIDO = "recorrido.json"
+
+
+def leer_recorrido(actualizador) -> dict | None:
+    """
+    Solo para las capturas de pantalla en el emulador: adb deja recorrido.json
+    ({"servidor": ..., "token": ...}) en la carpeta de la app. Se lee una vez y se borra.
+    """
+    if actualizador is None:
+        return None
+    try:
+        import json
+
+        ruta = os.path.join(actualizador.carpeta(), ARCHIVO_RECORRIDO)
+        if not os.path.exists(ruta):
+            return None
+        with open(ruta, encoding="utf-8") as archivo:
+            datos = json.load(archivo)
+        os.remove(ruta)
+        return datos if isinstance(datos, dict) and datos.get("servidor") and datos.get("token") else None
+    except Exception as error:
+        print(f"[recorrido] no se pudo leer: {error!r}", flush=True)
+        return None
