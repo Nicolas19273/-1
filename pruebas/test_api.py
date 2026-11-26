@@ -146,6 +146,13 @@ base = {
 assert "Título" in ANA.post("/api/avisos", {**base, "titulo": "x"}, esperado=400)["error"]
 assert "fecha" in ANA.post("/api/avisos", {**base, "inicio_evento": "mañana"}, esperado=400)["error"]
 assert ANA.post("/api/avisos", {**base, "titulo": "Una weá de partido"}, esperado=400)["error"]
+# en contexto inadecuado tampoco se publica, y el mensaje dice qué cambiar
+for campo, texto in [("descripcion", "después fumemos un pito"), ("titulo", "No se aceptan peruanos"),
+                     ("descripcion", "chúpame el pico"), ("lugar", "donde venden falopa")]:
+    error = ANA.post("/api/avisos", {**base, campo: texto}, esperado=400)["error"]
+    assert "inapropiad" in error, error
+assert ANA.post("/api/filtro/revisar", {"texto": "Subida al pico, a las 5 y pico"})["palabras"] == []
+assert ANA.post("/api/filtro/revisar", {"texto": "vendo marihuana barata"})["palabras"] == ["marihuana"]
 aviso = ANA.post("/api/avisos", base)["aviso"]
 assert aviso["titulo"] == "Pichanga en la ULagos" and aviso["es_mio"] is True and aviso["me_uni"] is False
 assert aviso["cupos_libres"] == 2 and aviso["ocupados"] == 8 and aviso["abierto"] is True and aviso["estado"] is None

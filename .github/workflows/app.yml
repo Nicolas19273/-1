@@ -39,6 +39,8 @@ jobs:
           python-version: "3.12"
       - name: Instalar dependencias
         run: pip install -r requirements.txt requests certifi "flet>=1.1,<2"
+      - name: Prueba del filtro de palabras
+        run: python pruebas/test_filtro.py
       - name: Prueba de la API del servidor
         run: python pruebas/test_api.py
       - name: Prueba de la app (pantallas con Flet real + servidor local)

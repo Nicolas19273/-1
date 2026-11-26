@@ -46,68 +46,15 @@ import unicodedata
 from dataclasses import dataclass
 
 # --------------------------------------------------------------------------- #
-# Listas (se pueden escribir con o sin tildes; se normalizan solas)
+# Listas: viven en filtro_listas.py (palabras, pedazos, frases y reglas de contexto)
 # --------------------------------------------------------------------------- #
 
-# Palabras completas: se tachan cuando aparecen como palabra entera.
-PALABRAS = """
-puta putas puto putos putita putitas putito putitos puton putona putear puteada puteando
-putero puteria putada putadas hijueputa hijueputas hijoputa hijaputa hijoeputa hdp hdlgp
-ptm ptmr ptmre
-mierda mierdas mierdero mierdoso mierdosa mrd
-cagar cagada cagadas cagado cagada cagon cagona cagando cago cagas caga cagan cague cagaste
-cago cagaron
-cabron cabrona cabrones cabronas cabronazo carajo carajos coño coños
-joder jodido jodida jodidos jodidas jodete joderse
-verga vergas vergon vergudo
-pendejo pendeja pendejos pendejas pendejada
-culo culos culero culera culeros culeras culiao culiaos culiado culiados culiada culiadas
-culia culiaa culear culiar culeado culeada culiando culeando
-ql qlo qla qlia qliao qlao qls qlos
-chucha chuchas chuchetumare chuchetumadre chuchatumadre chuchatumare
-conchetumare conchetumadre conchatumadre conchatumare conchesumadre conchesumare
-conchasumadre conchasumare ctm csm ctmr
-weon weona weones weonas weonao weonada wea weas weado weada
-huevon huevona huevones huevonas hueon hueona hueones hueonas gueon guevon guevona
-wn wna wns aweonao aweonado aweonada aweona ahuevonado ahuevonada ahueonado ahueonada
-maraco maracos marica maricas maricon maricones maricona mariconas mariconazo maricueca
-fleto fletos colipato colipatos joto jotos sidoso sidosa travelo travelos bollera bolleras
-tortillera tortilleras
-mongolico mongolica mongolicos mongolo mongola subnormal subnormales
-imbecil imbeciles idiota idiotas estupido estupida estupidos estupidas tarado tarada tarados
-pelotudo pelotuda pelotudos pelotudas boludo boluda boludos gilipollas gilipolla
-pichula pichulas pichulon zorra zorras perra perras malparido malparida malparidos
-gonorrea chingar chingada chingado chingadera chinga chingue chingon pinche pinches
-mamon mamona mamones mamada mamadas mamahuevo mamaguevo follar follando follada
-teta tetas tetona tetonas pajero pajera pajeros pajeras pajearse
-chupala chupalo chupamela chupamelo chupapico chupapija
-flaite flaites sudaca sudacas veneco venecos nazi nazis hitler
-porno porn nudes
-fuck fucks fucking fuckin fucker fuckers fucked fck fk fuk fukin motherfucker motherfuckers
-wtf stfu shit shits shitty bullshit bitch bitches bitchy asshole assholes ass dumbass jackass
-cunt cunts pussy pussies dickhead cocksucker bastard bastards slut sluts whore whores
-nigger niggers nigga niggas faggot faggots fag fags retard retarded twat wanker kys
-"""
+import filtro_listas as _listas  # noqa: E402
 
-# Pedazos que se tachan aunque estén pegados a otras palabras. Solo se ponen
-# aquí los que NO aparecen dentro de palabras normales del español.
-PEDAZOS = """
-conchetu conchatu conchesu conchasu chuchetu chuchatu hijueput hijodeput hijadeput hijoput
-putamadr culiao culiado culiaos aweona ahueona ahuevona maricon pendej mierd
-weon hueon huevon gilipoll mamahuev mamaguev chupapic motherf fuck
-"""
-
-# Frases: se tachan cuando aparecen juntas, en este orden.
-FRASES = [
-    "concha de tu madre",
-    "concha e tu madre",
-    "concha tu madre",
-    "concha su madre",
-    "chupa pico",
-    "chupen pico",
-    "chupa la",
-    "me cago en",
-]
+PALABRAS = _listas.PALABRAS
+PEDAZOS = _listas.PEDAZOS
+FRASES = _listas.FRASES
+PERMITIDAS = _listas.PERMITIDAS
 
 # --------------------------------------------------------------------------- #
 # Reglas propias (se agregan desde /admin)
@@ -122,10 +69,24 @@ class Regla:
     palabra: str  # palabra o frase
     cerca_de: tuple[str, ...] = ()  # vacío = se filtra siempre
     excepto: tuple[str, ...] = ()  # frases donde nunca se filtra
+    salvo: tuple[str, ...] = ()  # si alguna aparece en el texto, no se filtra (charla, prevención...)
 
     @property
     def siempre(self) -> bool:
         return not self.cerca_de
+
+
+def _reglas_base() -> list[Regla]:
+    """Las reglas de contexto que trae el filtro (filtro_listas.REGLAS_BASE), con id 0."""
+    reglas = []
+    for palabras, cerca, excepto, salvo in _listas.REGLAS_BASE:
+        formas = palabras if isinstance(palabras, list) else palabras.split()
+        for forma in formas:
+            reglas.append(Regla(0, forma, tuple(cerca), tuple(excepto), tuple(salvo)))
+    return reglas
+
+
+REGLAS_BASE = _reglas_base()
 
 
 _MARCA_ENE = ""  # para que la ñ no se convierta en n (año ≠ ano)
@@ -143,6 +104,8 @@ class FiltroPalabras:
     PALABRAS = PALABRAS
     PEDAZOS = PEDAZOS
     FRASES = FRASES
+    PERMITIDAS = PERMITIDAS
+    REGLAS_BASE = REGLAS_BASE
     VENTANA = VENTANA
 
     def __init__(self) -> None:
@@ -158,7 +121,11 @@ class FiltroPalabras:
         self.__lista_sin_dobles = {p for p in self.__lista if not self._tiene_dobles(p)}
         self.__pedazos = [self.normalizar(p) for p in self.PEDAZOS.split()]
         self.__frases = [[self.normalizar(p) for p in frase.split()] for frase in self.FRASES]
-        self.__reglas: list[tuple[Regla, list[str], list[list[str]], list[list[str]]]] = []
+        self.__permitidas = {self.normalizar(p) for p in self.PERMITIDAS.split()}
+        self.__base = self._compilar(self.REGLAS_BASE)  # las del archivo: siempre están
+        self.__reglas: list = []  # las propias (desde la administración)
+        self.__indice: dict[str, list] = {}
+        self._indexar()
 
     # ------------------------------------------------------------------ #
     # Normalización: lleva cada palabra a una forma simple para comparar
@@ -185,7 +152,7 @@ class FiltroPalabras:
         return re.search(r"(.)\1", t) is not None
 
     def _es_mala(self, forma: str) -> bool:
-        if not forma:
+        if not forma or forma in self.__permitidas:
             return False
         if forma in self.__lista:
             return True
@@ -201,19 +168,39 @@ class FiltroPalabras:
     def _formas(self, frase: str) -> list[str]:
         return [self.normalizar(m.group()) for m in _PALABRA.finditer(frase or "")]
 
-    def configurar(self, reglas: list[Regla]) -> None:
-        """Reemplaza las reglas propias. Valen desde el siguiente texto revisado."""
+    def _compilar(self, reglas: list[Regla]) -> list:
         compiladas = []
         for regla in reglas:
             frase = self._formas(regla.palabra)
             if frase:
                 cerca = [f for f in (self._formas(c) for c in regla.cerca_de) if f]
                 excepto = [f for f in (self._formas(e) for e in regla.excepto) if f]
-                compiladas.append((regla, frase, cerca, excepto))
-        self.__reglas = compiladas
+                salvo = [f for f in (self._formas(e) for e in regla.salvo) if f]
+                compiladas.append((regla, frase, cerca, excepto, salvo))
+        return compiladas
+
+    def _indexar(self) -> None:
+        """Agrupa las reglas por su primera palabra, para mirar solo las que pueden calzar."""
+        indice: dict[str, list] = {}
+        for compilada in self.__base + self.__reglas:
+            indice.setdefault(compilada[1][0], []).append(compilada)
+        self.__indice = indice
+
+    def configurar(self, reglas: list[Regla]) -> None:
+        """Reemplaza las reglas propias. Valen desde el siguiente texto revisado."""
+        self.__reglas = self._compilar(reglas)
+        self._indexar()
 
     def reglas_actuales(self) -> list[Regla]:
         return [r for r, *_ in self.__reglas]
+
+    def cantidad_base(self) -> dict[str, int]:
+        """Cuánto trae el filtro de fábrica (para mostrarlo en la administración)."""
+        return {
+            "palabras": len(set(self.PALABRAS.split())),
+            "frases": len(self.FRASES),
+            "reglas": len(self.__base),
+        }
 
     def palabras_base(self) -> list[str]:
         """La lista base (la de este archivo), para mostrarla en /admin."""
@@ -230,25 +217,37 @@ class FiltroPalabras:
             if all(self._igual(formas[i + k], frase[k]) for k in range(n))
         ]
 
+    def _calza_en(self, formas: list[str], i: int, frase: list[str]) -> bool:
+        n = len(frase)
+        return i + n <= len(formas) and all(self._igual(formas[i + k], frase[k]) for k in range(n))
+
     def _tramos_de_reglas(self, fichas) -> list[tuple[int, int]]:
         formas = [f for _, _, f in fichas]
         tramos = []
-        for _regla, frase, cerca, excepto in self.__reglas:
-            for i in self._apariciones(formas, frase):
-                j = i + len(frase)
-                # ¿Está dentro de una excepción? ("y pico", "pico de")
-                if any(a <= i and j <= a + len(e) for e in excepto for a in self._apariciones(formas, e)):
-                    continue
-                # ¿Tiene una palabra de contexto cerca?
-                if cerca:
-                    desde, hasta = max(0, i - self.VENTANA), min(len(formas), j + self.VENTANA)
-                    if not any(
-                        desde <= a and a + len(c) <= hasta and not (i <= a < j)
-                        for c in cerca
-                        for a in self._apariciones(formas, c)
-                    ):
+        for i, forma in enumerate(formas):
+            claves = {forma, self._sin_dobles(forma)}
+            for clave in claves:
+                for _regla, frase, cerca, excepto, salvo in self.__indice.get(clave, ()):
+                    if not self._calza_en(formas, i, frase):
                         continue
-                tramos.append((fichas[i][0], fichas[j - 1][1]))
+                    j = i + len(frase)
+                    # ¿Está dentro de una excepción? ("y pico", "pico de")
+                    if any(a <= i and j <= a + len(e) for e in excepto for a in self._apariciones(formas, e)):
+                        continue
+                    # ¿Tiene una palabra de contexto cerca?
+                    if cerca:
+                        desde, hasta = max(0, i - self.VENTANA), min(len(formas), j + self.VENTANA)
+                        # cerca = alguna parte de la frase de contexto cae dentro de la ventana
+                        if not any(
+                            a < hasta and a + len(c) > desde and not (i <= a < j)
+                            for c in cerca
+                            for a in self._apariciones(formas, c)
+                        ):
+                            continue
+                    # ¿Es una charla, una clase, prevención...? Entonces no
+                    if salvo and any(self._apariciones(formas, e) for e in salvo):
+                        continue
+                    tramos.append((fichas[i][0], fichas[j - 1][1]))
         return tramos
 
     # ------------------------------------------------------------------ #
@@ -290,16 +289,17 @@ class FiltroPalabras:
                             break
             i = max(j, i + 1)
 
-        # 4) Reglas propias (desde /admin), con su contexto
+        # 4) Reglas de contexto (las del archivo y las propias desde la administración)
         tramos.extend(self._tramos_de_reglas(fichas))
 
-        return self._unir(tramos)
+        return self._unir(tramos, texto)
 
     @staticmethod
-    def _unir(tramos: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    def _unir(tramos: list[tuple[int, int]], texto: str = "") -> list[tuple[int, int]]:
+        """Junta los tramos que se tocan o que solo tienen espacios entre medio."""
         unidos: list[tuple[int, int]] = []
         for inicio, fin in sorted(tramos):
-            if unidos and inicio <= unidos[-1][1]:
+            if unidos and (inicio <= unidos[-1][1] or not texto[unidos[-1][1]:inicio].strip(" ")):
                 unidos[-1] = (unidos[-1][0], max(fin, unidos[-1][1]))
             else:
                 unidos.append((inicio, fin))
@@ -354,3 +354,4 @@ encontrar = filtro_palabras.encontrar
 contiene = filtro_palabras.contiene
 encontradas = filtro_palabras.encontradas
 quitar = filtro_palabras.quitar
+cantidad_base = filtro_palabras.cantidad_base

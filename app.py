@@ -493,6 +493,7 @@ class API:
         return {
             "reglas": [self.regla_json(r) for r in self.administracion.reglas()],
             "palabras_base": len(self.filtro.palabras_base()),
+            "base": self.filtro.cantidad_base(),  # palabras, frases y reglas de contexto de fábrica
             "largo_max_regla": self.administracion.LARGO_MAX_REGLA,
         }
 

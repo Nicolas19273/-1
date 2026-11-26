@@ -377,8 +377,11 @@ class PantallaAdminPalabras(PantallaAdminBase):
         if r is None:
             return
         self.campo_palabra.max_length = r.get("largo_max_regla", 60)
-        self.base.value = (f"Además, el filtro trae {r['palabras_base']} palabras base. "
-                           "Para cambiarlas hay que editar filtro.py.")
+        base = r.get("base") or {"palabras": r["palabras_base"], "frases": 0, "reglas": 0}
+        self.base.value = (f"Además, el filtro trae de fábrica {base['palabras']} palabras, "
+                           f"{base['frases']} frases y {base['reglas']} reglas de contexto "
+                           "(«pico» en «chupa el pico» sí; en «las 5 y pico», no). "
+                           "Para cambiarlas hay que editar filtro_listas.py.")
         if not r["reglas"]:
             self.lista.controls = [c.suave("Todavía no hay reglas propias.")]
             return
