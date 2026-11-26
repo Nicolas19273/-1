@@ -17,8 +17,14 @@ dependencies = [
 [tool.flet]
 product = "Join In"
 org = "com.joinin"
+bundle_id = "com.joinin.app"  # no cambiarlo: Android lo usa para reconocer las actualizaciones
 company = "Join In"
 copyright = "Proyecto Join In"
+icon_background = "#FFD21F"   # fondo amarillo detrás del «+1» del ícono (assets/icon.png)
+
+[tool.flet.splash]
+color = "#FFD21F"
+dark_color = "#FFD21F"
 
 [tool.flet.app]
 path = "src"

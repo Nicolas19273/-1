@@ -49,8 +49,6 @@ jobs:
     needs: pruebas
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    permissions:
-      contents: write
     env:
       PYTHONUTF8: "1"
       FLET_CLI_NO_RICH_OUTPUT: "1"
@@ -78,6 +76,13 @@ jobs:
             echo "::warning::Sin el secreto ANDROID_KEYSTORE_BASE64: el APK se firma con una clave de prueba distinta en cada versión."
           fi
 
+      - name: Gradle de a una tarea a la vez
+        # serious_python descarga Python para cada tipo de procesador (ABI) y anota
+        # las descargas en un mismo archivo: en paralelo ese archivo se corrompe.
+        run: |
+          mkdir -p ~/.gradle
+          printf 'org.gradle.workers.max=1\norg.gradle.parallel=false\n' >> ~/.gradle/gradle.properties
+
       - name: Construir APK
         working-directory: app_movil
         env:
@@ -103,16 +108,57 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: join-in-${{ env.VERSION }}
+          name: join-in-apk
           path: join-in.apk
           retention-days: 30
 
-      - name: Publicar la versión (solo main)
-        if: github.ref == 'refs/heads/main'
+  emulador:
+    name: Abrir la app en un emulador de Android
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: join-in-apk
+      - name: Activar KVM (emulador rápido)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Instalar, abrir y revisar la app
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash app_movil/pruebas/emulador.sh join-in.apk emulador ${{ github.ref == 'refs/heads/main' && 'ingreso' || '' }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emulador
+          path: emulador/
+
+  publicar:
+    name: Publicar el APK (solo main)
+    if: github.ref == 'refs/heads/main'
+    needs: [apk, emulador]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: join-in-apk
+      - name: Crear la versión en Releases
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: 1.0.${{ github.run_number }}
         run: |
-          gh release create "app-v$VERSION" join-in.apk \
+          gh release create "app-v$VERSION" join-in.apk --repo "${{ github.repository }}" \
             --title "Join In para Android $VERSION" \
             --notes "Descarga join-in.apk en tu celular Android y ábrelo para instalarlo (puede pedirte permitir instalar apps de esta fuente)." \
             --latest
