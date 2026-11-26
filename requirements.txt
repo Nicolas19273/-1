@@ -1,3 +1,4 @@
-nicegui>=2.0
-psycopg[binary]>=3.1  # conexión a PostgreSQL (Neon) cuando está en internet
-tzdata                # zonas horarias en cualquier sistema
+starlette>=0.40         # servidor de la API (la app del celular habla con él)
+uvicorn>=0.30           # pone el servidor en internet
+psycopg[binary]>=3.1    # conexión a PostgreSQL (Neon) cuando está en internet
+tzdata                  # zonas horarias en cualquier sistema

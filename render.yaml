@@ -1,4 +1,4 @@
-# Blueprint de Render: con este archivo Render sabe cómo publicar la página.
+# Blueprint de Render: con este archivo Render sabe cómo publicar el servidor de la app.
 # Plan gratuito. La base de datos va aparte (Neon), en DATABASE_URL.
 services:
   - type: web
