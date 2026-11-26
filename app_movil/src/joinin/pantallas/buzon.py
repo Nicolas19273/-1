@@ -39,7 +39,7 @@ class PantallaBuzon(Pantalla):
         r = await self.app.llamar(self.api.buzon, avisar=self.datos is None)
         if r is None:
             if self.datos is None:
-                self.lista.controls = [c.vacio(ft.Icons.WIFI_OFF, "No pudimos abrir tu buzón", "Toca Actualizar.")]
+                self.lista.controls = [c.vacio(ft.Icons.WIFI_OFF, "No pudimos abrir tu buzón", "Desliza hacia abajo para reintentar.")]
             return
         self.datos = r
         self.momento = f.leer_fecha(r["ahora"]) or f.ahora()

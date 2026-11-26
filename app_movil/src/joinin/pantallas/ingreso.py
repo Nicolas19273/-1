@@ -8,7 +8,7 @@ from __future__ import annotations
 import flet as ft
 
 from .. import componentes as c
-from ..app import Pantalla
+from ..app import Pantalla, ToquesSecretos
 from ..estilo import BLANCO, FONDO, GRIS_SUAVE
 from .inicio import logo
 
@@ -21,6 +21,8 @@ class PantallaIngreso(Pantalla):
         self.paso = "correo"
         self.correo = ""
         self.codigo_prueba: str | None = None
+        # La administración no tiene botón: se entra tocando 5 veces seguidas el logo «+1».
+        self.secreto = ToquesSecretos(self.ir_a_admin)
 
     def vista(self) -> ft.View:
         self.tarjeta = ft.Container(
@@ -37,12 +39,10 @@ class PantallaIngreso(Pantalla):
             scroll=ft.ScrollMode.AUTO,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             controls=[
-                ft.Row([logo(56), c.titulo("Join In", 30)], spacing=12),
+                ft.Row([ft.Container(logo(56), on_click=self.secreto.tocar), c.titulo("Join In", 30)], spacing=12),
                 c.texto("Arma tu panorama con estudiantes de la ULagos: únete a un partido, una junta de estudio "
                         "o una salida, o publica lo que te falta.", 15),
                 self.tarjeta,
-                ft.Row([c.boton_texto("Administración", self.ir_a_admin, ft.Icons.ADMIN_PANEL_SETTINGS)],
-                       alignment=ft.MainAxisAlignment.CENTER),
             ],
         )
 

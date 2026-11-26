@@ -8,7 +8,7 @@ import flet as ft
 
 from .. import componentes as c
 from .. import formato as f
-from ..app import Pantalla
+from ..app import Pantalla, ToquesSecretos
 from ..cliente import URL_DESCARGA
 from ..version import VERSION
 from ..estilo import AMARILLO, BLANCO, COLOR_PRINCIPAL, GRIS_SUAVE, TINTA, colores_de, icono_de
@@ -57,13 +57,17 @@ class PantallaTablero(Pantalla):
         self.lista = ft.Column([c.cargando("Buscando avisos…")], spacing=12)
         self._pintar_filtros()
         self.mostrar_version_nueva()
+        # Solo quien ya administra ve «Administración» en el menú; para entrar la primera
+        # vez se toca 5 veces seguidas el título «Join In» de arriba.
+        self.item_admin = ft.PopupMenuItem(icon=ft.Icons.ADMIN_PANEL_SETTINGS, content="Administración",
+                                           on_click=self.ir_a_admin, visible=self.app.es_admin)
         menu = ft.PopupMenuButton(
             icon=ft.Icons.ACCOUNT_CIRCLE,
             tooltip="Tu cuenta",
             menu_position=ft.PopupMenuPosition.UNDER,
             items=[
                 ft.PopupMenuItem(icon=ft.Icons.INBOX, content="Mi buzón", on_click=self.ir_al_buzon),
-                ft.PopupMenuItem(icon=ft.Icons.ADMIN_PANEL_SETTINGS, content="Administración", on_click=self.ir_a_admin),
+                self.item_admin,
                 ft.PopupMenuItem(),
                 ft.PopupMenuItem(icon=ft.Icons.LOGOUT, content="Cerrar sesión", on_click=self.preguntar_salir),
                 ft.PopupMenuItem(icon=ft.Icons.INFO_OUTLINE, content=f"Join In {texto_version()}"),
@@ -81,6 +85,7 @@ class PantallaTablero(Pantalla):
                 ft.Container(height=80),  # espacio para que el botón flotante no tape la última tarjeta
             ],
             al_refrescar=self.actualizar,
+            al_tocar_titulo=ToquesSecretos(self.ir_a_admin).tocar,
             acciones=[
                 ft.IconButton(ft.Icons.INBOX, tooltip="Mi buzón", on_click=self.ir_al_buzon),
                 menu,
@@ -132,13 +137,14 @@ class PantallaTablero(Pantalla):
         if r is None:
             if not self.cargado:
                 self.lista.controls = [
-                    c.vacio(ft.Icons.WIFI_OFF, "No pudimos cargar el tablero", "Revisa tu internet y toca Actualizar."),
+                    c.vacio(ft.Icons.WIFI_OFF, "No pudimos cargar el tablero", "Revisa tu internet y desliza hacia abajo para reintentar."),
                 ]
             return
         self.cargado = True
         self.momento = f.leer_fecha(r["ahora"]) or f.ahora()
         self.avisos = r["avisos"]
         self.saludo.value = self._texto_saludo()
+        self.item_admin.visible = self.app.es_admin
         self.mostrar_version_nueva()
         self._pintar_filtros()
         self._pintar_lista()

@@ -157,11 +157,16 @@ mejor.
 2. Key: `CLAVE_ADMIN` · Value: una clave larga que no uses en otro lado
    (por ejemplo, 4 o 5 palabras al azar).
 3. Toca **Save Changes**. Render reinicia el servidor solo (1 a 3 minutos).
-4. En la app, toca **Administración** (abajo en la pantalla de ingreso, o en
-   el menú de tu cuenta, arriba a la derecha del tablero), escribe la clave y
-   toca **Entrar**. No hace falta haber ingresado con tu correo: si ya
-   ingresaste, tu cuenta queda como administradora; si no, ese celular. Queda
-   así hasta que toques **Salir de administración**.
+4. La administración **no tiene botón a la vista**. Para entrar:
+   - en la pantalla de ingreso, toca **5 veces seguidas el logo amarillo «+1»**;
+   - o, ya dentro, toca **5 veces seguidas el título «Join In»** de arriba
+     del tablero.
+
+   Escribe la clave y toca **Entrar**. No hace falta haber ingresado con tu
+   correo: si ya ingresaste, tu cuenta queda como administradora; si no, ese
+   celular. Mientras administres, aparece **Administración** en el menú de tu
+   cuenta (arriba a la derecha); a los demás estudiantes no les aparece.
+   Queda así hasta que toques **Salir de administración**.
 
 Como la administración no exige ingresar con el correo, puedes entrar aunque
 tu propio correo esté en uso en otro celular, y liberarlo desde **Correos en

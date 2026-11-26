@@ -524,9 +524,18 @@ async def prueba():
     assert nombre_pantalla(ana) == "PantallaTablero" and hay(pa, "Todos (2)") and hay(pa, "Truco en la sala")
     print("OK: comentarios de quien organiza y borrar el propio")
 
-    # 6) Administración desde un celular sin ingresar
+    # 6) Administración desde un celular sin ingresar: no hay botón a la vista;
+    #    se entra tocando 5 veces seguidas el logo «+1»
     adm, pd = await celular()
-    await tocar(pd, "Administración")
+    assert not hay(pd, "Administración") and not hay(pd, "administra")
+    for _ in range(4):
+        await tocar(pd, "+1")
+    assert nombre_pantalla(adm) == "PantallaIngreso"  # con 4 toques no pasa nada
+    adm.actual.secreto.toques = [t - 10 for t in adm.actual.secreto.toques]  # toques viejos no cuentan
+    await tocar(pd, "+1")
+    assert nombre_pantalla(adm) == "PantallaIngreso"
+    for _ in range(4):
+        await tocar(pd, "+1")
     assert nombre_pantalla(adm) == "PantallaAdminEntrada" and hay(pd, "Solo para quien administra Join In")
     await escribir(pd, "Clave de administración", "mala")
     await tocar(pd, "Entrar")
@@ -619,7 +628,8 @@ async def prueba():
     assert nombre_pantalla(adm) == "PantallaIngreso" and not adm.es_admin
     # otro celular admin pierde el permiso a mitad de camino: vuelve a pedir la clave
     adm2, pd2 = await celular()
-    await tocar(pd2, "Administración")
+    for _ in range(5):
+        await tocar(pd2, "+1")
     await escribir(pd2, "Clave de administración", CLAVE)
     await tocar(pd2, "Entrar")
     await tocar(pd2, "Correos en uso")
@@ -645,7 +655,24 @@ async def prueba():
     assert nombre_pantalla(otro) == "PantallaIngreso" and "celular" in ultimo_aviso(po).lower()
     print("OK: cerrar sesión, volver a entrar y un correo por celular")
 
-    # 10) Aviso de versión nueva (la app se instala desde GitHub, no desde Play Store)
+    # 10) En el tablero, «Administración» no aparece en el menú de un estudiante cualquiera
+    assert nombre_pantalla(ana) == "PantallaTablero" and not ana.es_admin
+    assert not any(texto_propio(x) == "Administración" for x in recorrer(pa.views[-1]))
+    for _ in range(5):
+        await tocar(pa, "Join In")  # el título de arriba
+    assert nombre_pantalla(ana) == "PantallaAdminEntrada"
+    await escribir(pa, "Clave de administración", CLAVE)
+    await tocar(pa, "Entrar")
+    assert nombre_pantalla(ana) == "PantallaAdmin" and ana.es_admin
+    await ana.volver()
+    assert hay_exacto(pa, "Administración")  # ya administra: ahora sí está en el menú
+    await tocar(pa, "Administración")
+    await tocar(pa, "Salir de administración")
+    assert nombre_pantalla(ana) == "PantallaTablero" and not ana.es_admin
+    assert not any(texto_propio(x) == "Administración" for x in recorrer(pa.views[-1]))
+    print("OK: la administración no se ve; se entra con 5 toques y solo quien administra la ve en el menú")
+
+    # 11) Aviso de versión nueva (la app se instala desde GitHub, no desde Play Store)
     from joinin import app as nucleo
     from joinin.cliente import URL_DESCARGA, es_mas_nueva
 
@@ -668,7 +695,7 @@ async def prueba():
         nucleo.VERSION = "dev"
     print("OK: compartir avisos, deslizar para actualizar y aviso de versión nueva")
 
-    # 11) Textos de fechas y estados (los mismos que tenía la página)
+    # 12) Textos de fechas y estados (los mismos que tenía la página)
     ref = datetime(2026, 11, 26, 10, 0, tzinfo=formato.ZONA_HORARIA)
     assert formato.texto_fecha_evento(ref.replace(hour=20), ref) == "Hoy, 20:00"
     assert formato.texto_fecha_evento(ref + timedelta(days=1), ref) == "Mañana, 10:00"

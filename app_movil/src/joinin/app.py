@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import re
 import secrets
+import time
 from typing import Any, Callable
 
 import flet as ft
@@ -88,11 +89,13 @@ class Pantalla:
             desplazamiento = None
         else:
             cuerpo, desplazamiento = controles, ft.ScrollMode.AUTO
+        texto_titulo = ft.Text(titulo or "", weight=ft.FontWeight.W_800, color=TINTA)
+        al_tocar_titulo = extra.pop("al_tocar_titulo", None)
         return ft.View(
             route=self.ruta,
             controls=cuerpo,
             appbar=ft.AppBar(
-                title=ft.Text(titulo or "", weight=ft.FontWeight.W_800, color=TINTA),
+                title=ft.Container(texto_titulo, on_click=al_tocar_titulo) if al_tocar_titulo else texto_titulo,
                 bgcolor=FONDO,
                 color=TINTA,
                 actions=extra.pop("acciones", None) or [],
@@ -102,6 +105,30 @@ class Pantalla:
             scroll=desplazamiento,
             **extra,
         )
+
+
+class ToquesSecretos:
+    """
+    La entrada escondida a la administración: tocar algo varias veces seguidas
+    (como las «opciones de desarrollador» de Android). No se ve ni se anuncia.
+    """
+
+    VECES = 5
+    SEGUNDOS = 3
+
+    def __init__(self, al_completar: Callable, reloj: Callable[[], float] = time.monotonic):
+        self.al_completar = al_completar
+        self.reloj = reloj
+        self.toques: list[float] = []
+
+    async def tocar(self, e=None) -> None:
+        ahora = self.reloj()
+        self.toques = [t for t in self.toques if ahora - t < self.SEGUNDOS] + [ahora]
+        if len(self.toques) >= self.VECES:
+            self.toques = []
+            resultado = self.al_completar()
+            if asyncio.iscoroutine(resultado):
+                await resultado
 
 
 class AppJoinIn:
