@@ -28,6 +28,17 @@ ARCHIVO_PRUEBA = "prueba-actualizar"
 BAJANDO, LISTO, FALLO = "bajando", "listo", "fallo"
 
 
+def _con_id(metodo, descarga: int):
+    """
+    setFilterById(long...) y remove(long...) reciben «varargs» de Java: pyjnius los
+    quiere sueltos (metodo(7)); algunas versiones los quieren en lista (metodo([7])).
+    """
+    try:
+        return metodo(descarga)
+    except Exception:
+        return metodo([descarga])
+
+
 def en_android() -> bool:
     """Flet deja este nombre en el entorno al correr dentro de la app de Android."""
     return bool(os.getenv("MAIN_ACTIVITY_HOST_CLASS_NAME"))
@@ -113,7 +124,7 @@ class ActualizadorAndroid:
         """(BAJANDO | LISTO | FALLO, bytes bajados, bytes en total)."""
         Query = self._clase("android.app.DownloadManager$Query")
         consulta = Query()
-        consulta.setFilterById([descarga])
+        _con_id(consulta.setFilterById, descarga)
         cursor = self.descargas.query(consulta)
         try:
             if cursor is None or not cursor.moveToFirst():
@@ -131,7 +142,7 @@ class ActualizadorAndroid:
         return BAJANDO, max(bajados, 0), max(total, 0)
 
     def cancelar(self, descarga: int) -> None:
-        self.descargas.remove([descarga])
+        _con_id(self.descargas.remove, descarga)
 
     # ------------------------------------------------------------------ instalar
 

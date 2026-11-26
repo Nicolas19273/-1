@@ -12,6 +12,7 @@ import asyncio
 import re
 import secrets
 import time
+import traceback
 from typing import Any, Callable
 
 import flet as ft
@@ -368,7 +369,7 @@ class AppJoinIn:
             self.cerrar_dialogo(dialogo)
             await asyncio.to_thread(act.instalar, descarga)
         except Exception as error:
-            print(f"[actualizar] {error!r}", flush=True)
+            print(f"[actualizar] {error!r}\n{traceback.format_exc()}", flush=True)
             if not estado["cancelado"]:
                 self.cerrar_dialogo(dialogo)
                 self.avisar("No se pudo bajar la actualización. Revisa tu internet e inténtalo de nuevo.", error=True)
