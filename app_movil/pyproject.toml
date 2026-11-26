@@ -30,4 +30,4 @@ dark_color = "#FFD21F"
 path = "src"
 
 [tool.flet.android]
-split_per_abi = false  # un solo APK que sirve en cualquier celular Android
+split_per_abi = true  # un APK por tipo de procesador: cada uno pesa un tercio

@@ -10,7 +10,8 @@ servidor con Starlette.
 
 **Descargar la app:**
 **https://github.com/Nicolas19273/-1/releases/latest/download/join-in.apk**
-(siempre baja la versión más nueva; más detalles en `app_movil/README.md`).
+(siempre baja la versión más nueva; para celulares antiguos hay una versión de
+32 bits en Releases; más detalles en `app_movil/README.md`).
 
 Funciona **gratis** con estos servicios:
 

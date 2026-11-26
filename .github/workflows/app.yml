@@ -94,22 +94,24 @@ jobs:
             export FLET_ANDROID_SIGNING_KEY_PASSWORD="$CLAVE"
             FIRMA=(--android-signing-key-store "$RUNNER_TEMP/join-in.jks" --android-signing-key-alias joinin)
           fi
-          flet build apk --yes --verbose \
+          # Un APK por tipo de procesador: cada uno pesa un tercio del APK «para todos».
+          flet build apk --yes --verbose --split-per-abi \
             --build-number "${{ github.run_number }}" --build-version "$VERSION" \
             "${FIRMA[@]}"
 
-      - name: Juntar el APK
+      - name: Juntar los APK
         run: |
           find app_movil/build -name "*.apk" -exec ls -la {} \;
-          APK=$(find app_movil/build -name "*.apk" | head -n 1)
-          test -n "$APK"
-          cp "$APK" join-in.apk
-          ls -la join-in.apk
+          buscar() { find app_movil/build -name "*$1*.apk" | head -n 1; }
+          cp "$(buscar arm64-v8a)" join-in.apk            # casi todos los celulares
+          cp "$(buscar armeabi-v7a)" join-in-32bits.apk   # celulares antiguos o muy básicos
+          cp "$(buscar x86_64)" join-in-x86_64.apk        # emuladores (para la prueba)
+          ls -la join-in*.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: join-in-apk
-          path: join-in.apk
+          path: join-in*.apk
           retention-days: 30
 
   emulador:
@@ -135,7 +137,7 @@ jobs:
           target: google_apis
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash app_movil/pruebas/emulador.sh join-in.apk emulador ${{ github.ref == 'refs/heads/main' && 'ingreso' || '' }}
+          script: bash app_movil/pruebas/emulador.sh join-in-x86_64.apk emulador ${{ github.ref == 'refs/heads/main' && 'ingreso' || '' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -158,7 +160,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: 1.0.${{ github.run_number }}
         run: |
-          gh release create "app-v$VERSION" join-in.apk --repo "${{ github.repository }}" \
+          gh release create "app-v$VERSION" join-in.apk join-in-32bits.apk --repo "${{ github.repository }}" \
             --title "Join In para Android $VERSION" \
-            --notes "Descarga join-in.apk en tu celular Android y ábrelo para instalarlo (puede pedirte permitir instalar apps de esta fuente)." \
+            --notes "Descarga **join-in.apk** en tu celular Android y ábrelo para instalarlo (puede pedirte permitir instalar apps de esta fuente). Si tu celular es antiguo y dice que no se puede instalar, usa **join-in-32bits.apk**." \
             --latest

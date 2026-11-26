@@ -10,6 +10,9 @@ Habla con el servidor de Render (`app.py` de la raíz), que guarda los datos en 
    (siempre baja la versión más nueva).
 2. Abre el archivo descargado y toca **Instalar**. Si Android lo pide, permite
    «instalar apps de esta fuente» para el navegador.
+   - Si tu celular es antiguo o muy básico y dice que no se puede instalar,
+     baja **join-in-32bits.apk** desde
+     https://github.com/Nicolas19273/-1/releases/latest
 3. Entra con tu correo `@alumnos.ulagos.cl` y el código que te llega.
 
 La primera vez del día la app puede tardar hasta un minuto en conectar: el plan
@@ -23,8 +26,12 @@ GitHub Actions (`.github/workflows/app.yml`):
 1. prueba el servidor (`pruebas/test_api.py`),
 2. prueba la app tocando sus pantallas con Flet real contra un servidor local
    (`app_movil/pruebas/test_app.py`),
-3. arma el APK con `flet build apk`,
-4. en `main`, lo publica en **Releases**.
+3. arma el APK con `flet build apk --split-per-abi` (uno por tipo de
+   procesador, más livianos que uno para todos),
+4. instala el APK en un emulador de Android, lo abre y revisa que llegue a
+   una pantalla sin errores (`app_movil/pruebas/emulador.sh`),
+5. en `main`, publica en **Releases** `join-in.apk` (celulares de 64 bits,
+   casi todos) y `join-in-32bits.apk` (celulares antiguos).
 
 ### Firma del APK (para poder actualizar sin desinstalar)
 

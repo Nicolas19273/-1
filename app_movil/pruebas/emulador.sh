@@ -31,6 +31,10 @@ done
 
 adb exec-out screencap -p > "$SALIDA/pantalla.png"
 adb logcat -d > "$SALIDA/logcat.txt"
+if command -v convert >/dev/null; then  # una vista chica de la pantalla, legible desde el registro
+  convert "$SALIDA/pantalla.png" -resize 360x -quality 70 "$SALIDA/pantalla.jpg" &&
+    { echo "--- pantalla.jpg (base64) ---"; base64 -w0 "$SALIDA/pantalla.jpg"; echo; echo "--- fin ---"; }
+fi
 
 echo "Textos en pantalla:"
 grep -o -E '(text|content-desc)="[^"]+"' "$SALIDA/ui.xml" 2>/dev/null | sed 's/^/  /' | head -40
